@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="monospace">
+<rect width="100%" height="100%" fill="white"/>
+<text x="8" y="16" font-size="13" fill="#666">syn-fold-heavy.dxf</text>
+<line x1="72.73" y1="863.64" x2="1527.27" y2="863.64" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1527.27" y1="863.64" x2="1527.27" y2="136.36" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1527.27" y1="136.36" x2="234.34" y2="136.36" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="234.34" y1="136.36" x2="234.34" y2="378.79" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="234.34" y1="378.79" x2="72.73" y2="378.79" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="72.73" y1="378.79" x2="72.73" y2="863.64" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="153.54" y1="217.17" x2="1446.46" y2="217.17" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="315.15" y1="540.4" x2="1446.46" y2="540.4" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="395.96" y1="702.02" x2="1365.66" y2="702.02" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="476.77" y1="370.71" x2="1284.85" y2="370.71" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="476.77" y1="621.21" x2="1284.85" y2="621.21" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="72.73" y1="378.79" x2="234.34" y2="378.79" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+</svg>

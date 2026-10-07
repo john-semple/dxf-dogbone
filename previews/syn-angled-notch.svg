@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="monospace">
+<rect width="100%" height="100%" fill="white"/>
+<text x="8" y="16" font-size="13" fill="#666">syn-angled-notch.dxf</text>
+<line x1="264.29" y1="946.43" x2="1335.71" y2="946.43" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1335.71" y1="946.43" x2="1335.71" y2="53.57" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1335.71" y1="53.57" x2="1109.29" y2="53.57" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1109.29" y1="53.57" x2="800.0" y2="410.71" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="800.0" y1="410.71" x2="490.71" y2="53.57" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="490.71" y1="53.57" x2="264.29" y2="53.57" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="264.29" y1="53.57" x2="264.29" y2="946.43" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="monospace">
+<rect width="100%" height="100%" fill="white"/>
+<text x="8" y="16" font-size="13" fill="#666">syn-near-hole.dxf</text>
+<line x1="345.45" y1="954.55" x2="1254.55" y2="954.55" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1254.55" y1="954.55" x2="1254.55" y2="45.45" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="1254.55" y1="45.45" x2="890.91" y2="45.45" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="890.91" y1="45.45" x2="890.91" y2="409.09" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="890.91" y1="409.09" x2="709.09" y2="409.09" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="709.09" y1="409.09" x2="709.09" y2="45.45" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="709.09" y1="45.45" x2="345.45" y2="45.45" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="345.45" y1="45.45" x2="345.45" y2="954.55" stroke="#1a1a1a" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<circle cx="800.0" cy="463.64" r="11.36" fill="none" stroke="#0055d0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="727.27" y="427.27" font-size="11" fill="#888">NOTES</text>
+</svg>
