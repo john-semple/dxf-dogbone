@@ -33,6 +33,29 @@ TOAST_APPLIED = "Corner applied."
 TOAST_PENDING_FLAG = ("Flagged entity awaiting decision — "
                       "use the flag buttons before confirming ({reasons}).")
 
+# -- apply all / undo / revert (M4) -------------------------------------------
+ENQUEUED_TOAST = "Corner queued ({n} pending) — Apply All to apply."
+STATUS_PENDING_COUNT = "Pending: {n}"
+STATUS_QUEUE_EMPTY = "No pending corners — click two edges to place one."
+APPLY_ALL_TOAST = "Applied {n} corner{s}."
+APPLY_ALL_NONE = "No pending corners to apply."
+APPLY_ALL_SKIPPED = "Skipped {n} corner{s}: {reasons}"
+UNDO_TOAST = "Undo — restored the previous state."
+UNDO_EMPTY = "Nothing to undo."
+REVERT_TOAST = "Reverted to the original DXF."
+REVERT_CONFIRM = ("Revert to Original discards every applied dogbone and "
+                  "flag decision. Continue?")
+REVERT_TITLE = "Revert to Original"
+BTN_APPLY_ALL = "Apply All"
+BTN_UNDO = "Undo"
+BTN_REVERT = "Revert to Original"
+PANEL_TITLE = "Tool"
+LABEL_DIAMETER = "Tool diameter:"
+UNIT_MM = "mm"
+UNIT_IN = "inch"
+DIA_READOUT = "Dia {dia:.4f} {unit} → R {r:.4f} mm"
+MM_PER_IN = 25.4
+
 # -- buttons -----------------------------------------------------------------
 BTN_CONFIRM = "Confirm"
 BTN_CANCEL = "Cancel"
@@ -47,6 +70,31 @@ FLAG_PROMPT_TEXT = (
 )
 FLAG_PROMPT_YES = "Delete — yes"
 FLAG_PROMPT_NO = "Keep — no"
+
+# -- fold designation (M5b) ---------------------------------------------------
+FOLD_MODE_ENTER = ("Fold mode: click or box-select lines to designate / "
+                   "undesignate folds. Middle-drag pans; Esc exits.")
+FOLD_MODE_EXIT = "Exited fold mode."
+FOLD_MODE_TOGGLE_ON = "Designate Folds"
+FOLD_MODE_TOGGLE_OFF = "Exit Fold Mode"
+FOLD_BADGE = "{n} of {m} straight lines designated"
+FOLD_PATTERN_LABEL = "Auto-pick layers:"
+FOLD_PATTERN_DEFAULTS = "bend, fold, centerline"
+FOLD_DESIGNATED_WARNING = "fold {eid} runs within {eps} mm of contour edge {other}"
+
+# -- manual trim tool (ADR-025) ----------------------------------------------
+TRIM_MODE_ENTER = ("Trim mode: click the LINE end you want to move — it snaps "
+                   "to its closest intersection. Esc exits.")
+TRIM_MODE_EXIT = "Exited trim mode."
+TRIM_MODE_TOGGLE_ON = "Trim to Closest"
+TRIM_MODE_TOGGLE_OFF = "Exit Trim Mode"
+TRIM_PICK_STATUS = "Click a line near the end you want to trim or extend."
+TRIM_TOAST_REFUSED = "Trim refused: {reason}"
+TRIM_PREVIEW_STATUS = "Review the trim preview, then Confirm or Esc to cancel."
+TRIM_TOAST_APPLIED = "Trim applied."
+TRIM_DELETE_APPLIED = "Stray line deleted."
+TRIM_PREVIEW_DELETE = "Stray line (no attachments) — the whole run will be deleted."
+TRIM_PILL_CONFIRM = "CONFIRM\nTRIM"
 
 
 def _counts(pairs: list[tuple[str, int]]) -> str:

@@ -104,6 +104,14 @@ class CornerResult:
     warnings: list[str] = field(default_factory=list)
                               # ADR-016(b): non-blocking, human-readable; ADR-009 keep-warning
                               # carrier (KEPT_CROSSER / KEPT_INTERSECTS / FLAG_DECISION ...)
+
+@dataclass
+class EditResult:            # ADR-025: manual-edit result (trim-to-closest / stray-delete)
+    ok: bool                  # False => reason carries the refusal verbatim
+    reason: str | None         # "NO_TARGET: ..." | "UNKNOWN_EDGE: ..." | None on ok
+    deletions: list[str]      # stray-delete: the run's ENTITY-level eids (members + composites)
+    trims: list[Trim]         # at most one; trims[0].eid = the promoted-run eid; Seg (Pt,Pt)
+    warnings: list[str] = field(default_factory=list)
 ```
 
 Model state (owned by `model/`, stdlib + geometry imports allowed per SPEC §11.1 amendment ADR-008):
@@ -122,6 +130,10 @@ class Model:
     def restore(self, s: ModelState) -> None  # swap; ID↔entity mapping preserved
     def get(self, eid: str) -> Entity | None
     def apply_corner(self, res: CornerResult) -> None  # mutate per result
+    def apply_edit(self, res: EditResult) -> None      # ADR-025: manual edits (trim/stray-delete);
+                                                        # deletions scrubbed from primitives AND
+                                                        # fold_eids AND flag_decisions; trims are
+                                                        # Seg-only; every referenced eid must exist
 ```
 
 **Adjacency (ADR-012, loop-2 amendment):** the model maintains an endpoint-keyed adjacency map (each eid → set of member eids sharing an endpoint within EPS_COINCIDE), built at load, traveling inside snapshots. *(ADR-015(e): the map is a pure derived function `geometry/adjacency.py: build_adjacency(entities, eps_coincide)` of the snapshot's primitives — "maintained/traveling" is satisfied by derivation; no ModelState field is added.)* Cascade trigger: attachment endpoint in a rebuilt edge's removed portion AND no remaining attached neighbor after that portion is removed — **a surviving entity's contact at a vertex inside the removed portion does NOT count as a remaining attached neighbor; the cascade is evaluated transitively (truth-table deletions first, then iterate to fixed-point).** Both criteria required.
@@ -186,8 +198,27 @@ def promoted_edge_at(primitives: list[Entity], p_world: Pt, eps_pick: float,
     # or ≥ -0.999 reversed) until non-collinear neighbor; returns the promoted Seg (eid
     # per geometry/runs.chain_run: promoted-<first entity eid>, composite's own eid kept
     # on re-promotion — ADR-016(f); M2.2: canonical direction derives from the run
-    # EXTENT, snapped to the dominant axis) — Seg carries fields members: list[str]
-    # (ordered member eids merged, ADR-012) and pick_eid (the clicked member eid)
+                  # EXTENT, snapped to the dominant axis) — Seg carries fields members: list[str]
+                  # (ordered member eids merged, ADR-012) and pick_eid (the clicked member eid)
+
+def trim_to_closest(primitives: list[Entity], p_world: Pt, eid: str,
+                    eps_construction: float = EPS_CONSTRUCTION,
+                    eps_coincide: float = EPS_COINCIDE) -> EditResult
+                  # ADR-025 manual trim-to-closest. ``eid`` is a promoted_edge_at Seg's eid
+                  # (plain member or promoted-* composite); the run is re-derived via
+                  # chain_run from the seed (X-crossing discipline, ADR-016(f)). The moving
+                  # endpoint = the run-extent endpoint nearest the click (within EPS_COINCIDE
+                  # of the clicked entity's own end when the click lands interior). It snaps
+                  # to its CLOSEST supporting-geometry intersection among candidate targets
+                  # (LINE supporting line; ARC/CIRCLE supporting circle, arc-span-filtered
+                  # via span_contains when the arc actually spans the crossing; POINT
+                  # location) — candidates exclude the run's own member eids; extend-when-
+                  # short, trim-when-past. Zero EXTERNAL attachments (build_adjacency minus
+                  # run members, EPS_COINCIDE) => stray => propose deleting the run's
+                  # entity-level eids (deletions, no trims). Refusals (verbatim, pinned):
+                  # "UNKNOWN_EDGE: <eid> is not resolvable in primitives" /
+                  # "NO_TARGET: no supporting-geometry intersection found". Pure engine:
+                  # imports geometry only.
 ```
 
 **Promotion/reconciliation rules (ADR-012):** every `Rebuild/Trim/Deletion` references member eids; `Model.apply_corner` replaces the member run with the rebuilt composite (registered under the promoted eid), migrates protected-set references from members to the composite, and asserts no member eid is referenced twice. Entities whose attachment endpoint lands on a rebuilt edge's removed portion (± EPS_COINCIDE) are deleted by the attachment-cascade rule and flagged (editable, sticky).

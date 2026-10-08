@@ -1,19 +1,21 @@
-"""Model — CONTRACTS §1 (snapshot/restore/get/apply_corner), M2 minimal.
+"""Model — CONTRACTS §1 (snapshot/restore/get/apply_corner/apply_edit), M2 minimal.
 
 ADR-001 deep-copy snapshots; ADR-012 reconciliation; ADR-015(c) arc n<seq>
 minting + (k) model-legal run re-derivation via geometry.runs (model may
 import geometry, never rules — SPEC §11.1). The undo STACK and
 Revert-to-Original are M4 scope; this class provides the operations M2's
-ADR-012 tests need.
+ADR-012 tests need. apply_edit is the ADR-025 manual-edit mutation
+(trim-to-closest / stray-delete).
 """
 from __future__ import annotations
 
 import copy
+import math
 
 from dataclasses import replace
 
 from geometry import geomops as go
-from geometry.entities import Arc, CornerResult, Entity, Seg
+from geometry.entities import Arc, CornerResult, EditResult, Entity, Seg
 from geometry.runs import chain_run
 from geometry.tolerances import EPS_COINCIDE
 from model.state import ModelState
@@ -173,3 +175,160 @@ class Model:
         for f in res.flags:
             if f.decision is not None:
                 st.flag_decisions[f.eid] = f.decision
+
+    def apply_edit(self, res: EditResult) -> None:
+        """ADR-025 manual-edit mutation (CONTRACTS §1):
+        - deletions (stray rule): removed from primitives AND scrubbed
+          from fold_eids and flag_decisions (a designated fold that no
+          longer exists must not linger; a trimmed fold KEEPS its eid
+          and designation),
+        - trims: Seg-only, applied via replace(a=..., b=...) on the
+          entity carrying trims[0].eid (the promoted-run eid resolves to
+          the run's entities; plain members AND registered composites
+          both reposition — the whole run moves per ADR-025),
+        - every referenced eid must be present (asserts).
+        """
+        if not res.ok:
+            raise ValueError("apply_edit requires res.ok")
+        st = self._state
+        present = {e.eid for e in st.primitives}
+        missing = [d for d in res.deletions if d not in present]
+        if missing:
+            raise ValueError(f"apply_edit: deletions not in primitives: {missing}")
+
+        if res.deletions:
+            dels = set(res.deletions)
+            st.primitives = [e for e in st.primitives if e.eid not in dels]
+            st.fold_eids -= dels
+            for eid in dels:
+                st.flag_decisions.pop(eid, None)
+            return
+
+        for t in res.trims:
+            # the trim eid is the promoted-run eid (ADR-025(b)); resolve
+            # to the run via chain_run (plain member pre-apply, registered
+            # composite post-apply — the apply_corner walk)
+            seed_eid = t.eid
+            seed = None
+            stripped = False
+            while True:
+                seed = next(
+                    (e for e in st.primitives
+                     if isinstance(e, Seg) and e.eid == seed_eid),
+                    None,
+                )
+                if seed is not None:
+                    break
+                if not stripped and seed_eid.startswith("promoted-"):
+                    seed_eid = seed_eid[len("promoted-"):]
+                    stripped = True
+                else:
+                    break
+            if seed is None:
+                raise ValueError(
+                    f"apply_edit: trim eid {t.eid} not resolvable in primitives")
+            chained = chain_run(st.primitives, seed, EPS_COINCIDE)
+            if chained is None:
+                raise ValueError(
+                    f"apply_edit: trim eid {t.eid} not resolvable in primitives")
+            run, ent_eids = chained
+            new_a, new_b = t.new
+
+            # run axis: project everything onto a->b
+            rx = run.b.x - run.a.x
+            ry = run.b.y - run.a.y
+            run_len = math.hypot(rx, ry)
+            if run_len <= 0.0:
+                raise ValueError(f"apply_edit: degenerate run for {t.eid}")
+
+            def proj(p) -> float:
+                return ((p.x - run.a.x) * rx + (p.y - run.a.y) * ry) / run_len
+
+            p_new_a, p_new_b = proj(new_a), proj(new_b)
+            moved_a = go.dist(run.a, new_a) > EPS_COINCIDE
+            moved_b = go.dist(run.b, new_b) > EPS_COINCIDE
+            if not (moved_a or moved_b):
+                continue  # nothing to do (idempotent no-op)
+
+            # member surgery along the axis: a member is
+            #  - KEPT-AS-IS when its span lies within the kept portion,
+            #  - END-MOVED when it straddles the new extent endpoint,
+            #  - DELETED when its span lies entirely within the removed
+            #    portion (the trim consumes it — subject redefinition, not
+            #    an attachment cascade).
+            lo = min(p_new_a, p_new_b)
+            hi = max(p_new_a, p_new_b)
+            removed: set[str] = set()
+            replacements: dict[str, tuple[Pt, Pt]] = {}
+            by_eid = {e.eid: e for e in st.primitives if isinstance(e, Seg)}
+            for eid in ent_eids:
+                e = by_eid.get(eid)
+                if e is None:
+                    continue
+                s0, s1 = sorted((proj(e.a), proj(e.b)))
+                ra, rb = e.a, e.b
+                if moved_b:
+                    if s0 >= p_new_b - EPS_COINCIDE and s1 > p_new_b + EPS_COINCIDE \
+                            and s0 <= 1.0 + EPS_COINCIDE and s1 <= 1.0 + EPS_COINCIDE and p_new_b < s0:
+                        pass  # handled below via generic rules
+                # generic rules per member span vs the kept extent:
+                if moved_b:
+                    # fully in the removed suffix (strictly past new_b):
+                    if s0 >= p_new_b - EPS_COINCIDE and s1 <= 1.0 + EPS_COINCIDE \
+                            and p_new_b < s0 - EPS_COINCIDE:
+                        removed.add(eid)
+                        continue
+                    # straddles new_b: move the endpoint nearer to run.b
+                    if s0 <= p_new_b <= s1 + EPS_COINCIDE or \
+                            (s0 <= p_new_b + EPS_COINCIDE and s1 >= p_new_b - EPS_COINCIDE):
+                        if proj(e.b) >= proj(e.a):
+                            rb = new_b
+                        else:
+                            ra = new_b
+                        replacements[eid] = (ra, rb)
+                        continue
+                if moved_a:
+                    # fully in the removed prefix (strictly before new_a):
+                    if s1 <= p_new_a + EPS_COINCIDE and s0 >= -EPS_COINCIDE \
+                            and p_new_a > s1 + EPS_COINCIDE:
+                        removed.add(eid)
+                        continue
+                    # straddles new_a: move the endpoint nearer to run.a
+                    if s0 <= p_new_a <= s1 + EPS_COINCIDE or \
+                            (s0 <= p_new_a + EPS_COINCIDE and s1 >= p_new_a - EPS_COINCIDE):
+                        if proj(e.b) <= proj(e.a):
+                            rb = new_a
+                        else:
+                            ra = new_a
+                        replacements[eid] = (ra, rb)
+                        continue
+                # extension beyond the old extent: the owner member moves
+                if moved_b and s1 >= 1.0 - EPS_COINCIDE and p_new_b > 1.0:
+                    if proj(e.b) >= proj(e.a):
+                        rb = new_b
+                    else:
+                        ra = new_b
+                    replacements[eid] = (ra, rb)
+                elif moved_a and s0 <= 0.0 + EPS_COINCIDE and p_new_a < 0.0:
+                    if proj(e.b) <= proj(e.a):
+                        rb = new_a
+                    else:
+                        ra = new_a
+                    replacements[eid] = (ra, rb)
+
+            if not replacements and not removed:
+                raise ValueError(
+                    f"apply_edit: trim {t.eid} moves no run endpoint")
+
+            # apply
+            if removed:
+                st.primitives = [e for e in st.primitives
+                                 if e.eid not in removed]
+                st.fold_eids -= removed
+                for eid in removed:
+                    st.flag_decisions.pop(eid, None)
+            for eid, (ra, rb) in replacements.items():
+                idx = next(i for i, x in enumerate(st.primitives)
+                           if x.eid == eid)
+                st.primitives[idx] = replace(
+                    by_eid[eid], a=ra, b=rb)

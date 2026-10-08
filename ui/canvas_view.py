@@ -17,12 +17,16 @@ import tkinter as tk
 
 from geometry.entities import Arc, Circ, Entity, PassThrough, PointEnt, Pt, Seg, TextEnt
 from model.state import ModelState
+from ui.theme import COLORS as THEME, font as theme_font
 from ui.transform import ViewTransform
 
-BG = "white"
-FG = "black"
-TEXT_FG = "#404040"
-POINT_FG = "#c00000"
+# theme-driven (UI-UPGRADE brief item 2): dark background, light
+# geometry strokes, readable MTEXT — literals live in ui/theme.py
+BG = THEME["canvas_bg"]
+FG = THEME["geometry_fg"]
+TEXT_FG = THEME["text_ent_fg"]
+POINT_FG = THEME["point_fg"]
+FOLD_FG = THEME["fold_designated"]  # M5b: designated fold color at draw time
 MARGIN = 0.08  # fraction of view size kept empty around the part on fit
 ZOOM_STEP = 1.25
 
@@ -73,6 +77,7 @@ class Viewer:
         self._eid_of: dict[int, str] = {}
         self._on_status = on_status
         self._pan_from: tuple[float, float] | None = None
+        self.fold_eids: set[str] = set()  # M5b: designated folds (draw-time color)
 
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
@@ -84,6 +89,7 @@ class Viewer:
 
     def set_model(self, state: ModelState) -> None:
         self._drawables = [e for e in state.primitives if not isinstance(e, PassThrough)]
+        self.fold_eids = set(state.fold_eids)  # M5b: draw-time fold color
         self.fit()
         self.redraw()
 
@@ -132,7 +138,8 @@ class Viewer:
         for e in texts:
             sx, sy = t.to_screen(e.p)
             item = c.create_text(sx, sy, text=e.text or " ",
-                                 anchor="w", fill=TEXT_FG, font=("TkDefaultFont", 9))
+                                  anchor="w", fill=TEXT_FG,
+                                  font=theme_font(9))
             self._register(e.eid, item)
 
     def _create(self, e: Entity, t: ViewTransform) -> int | None:
@@ -140,7 +147,11 @@ class Viewer:
         if isinstance(e, Seg):
             x1, y1 = t.to_screen(e.a)
             x2, y2 = t.to_screen(e.b)
-            return c.create_line(x1, y1, x2, y2, fill=FG, width=1)
+            # M5b: designated folds draw in the fold color (draw-time from
+            # model state; survives full-wipe redraws per the M5-plan ruling)
+            fill = FOLD_FG if e.eid in self.fold_eids else FG
+            width = 2 if e.eid in self.fold_eids else 1
+            return c.create_line(x1, y1, x2, y2, fill=fill, width=width)
         if isinstance(e, Arc):
             pts = [t.to_screen(p) for p in flatten_arc(e)]
             return c.create_line(*pts, fill=FG, width=1, smooth=False)
@@ -151,7 +162,7 @@ class Viewer:
         if isinstance(e, PointEnt):
             sx, sy = t.to_screen(e.p)
             return c.create_text(sx, sy, text="+", anchor="center",
-                                 fill=POINT_FG, font=("TkDefaultFont", 10))
+                                 fill=POINT_FG, font=theme_font(10))
         return None
 
     def _register(self, eid: str, item: int) -> None:

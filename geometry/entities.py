@@ -147,3 +147,19 @@ class CornerResult:
 # Flag option vocabulary (ADR-013). Kept adjacent to Flag for M2/M4; the
 # frozenset fields carry these exact strings.
 FLAG_OPTIONS: Final = frozenset({"delete", "keep", "trim"})
+
+
+@dataclass
+class EditResult:
+    """ADR-025: manual-edit result (trim-to-closest / stray-delete).
+
+    ``ok=False`` carries the refusal verbatim in ``reason``; on stray-delete
+    ``deletions`` lists the run's entity-level eids; a trim proposes at most
+    one Trim whose ``eid`` is the promoted-run eid (Seg (Pt, Pt) semantics).
+    """
+
+    ok: bool
+    reason: str | None
+    deletions: list[str]
+    trims: list[Trim]
+    warnings: list[str] = field(default_factory=list)

@@ -45,6 +45,7 @@ from geometry.entities import (
 from model.model import Model
 from rules.engine import ghost_candidates, place_corner
 from rules.filters import eps_pick_from_scale, promoted_edge_at
+from ui.theme import COLORS as THEME, font as theme_font
 import ui.messages as msg
 
 from ui.canvas_view import Viewer, flatten_arc
@@ -322,13 +323,16 @@ class WorkflowFSM:
 # Tkinter shell
 # ---------------------------------------------------------------------------
 
-HIGHLIGHT_COLOR = "#00b0f0"  # promoted-edge highlight (distinct from red)
-EDGE2_PICK_COLOR = "#00c000"  # edge-2 pick-phase highlight (until zoom)
-GHOST_COLOR = "#00b0f0"
+# Overlay colors: theme-driven (UI-UPGRADE brief item 2). Relative
+# distinction preserved — flash/ghost cyan-family, delete dark-bg-safe
+# red, flag orange; literals live in ui/theme.py.
+HIGHLIGHT_COLOR = THEME["highlight"]  # promoted-edge highlight (distinct from red)
+EDGE2_PICK_COLOR = THEME["edge2_pick"]  # edge-2 pick-phase highlight (until zoom)
+GHOST_COLOR = THEME["ghost"]
 GHOST_DASH = (3, 3)
-DELETE_COLOR = "#ff0000"     # thick red for delete/trim preview (brief item 3)
+DELETE_COLOR = THEME["delete"]  # thick red for delete/trim preview (brief item 3)
 DELETE_WIDTH = 3
-FLAG_COLOR = "#ff9900"      # flagged entities, orange outline
+FLAG_COLOR = THEME["flag"]     # flagged entities, orange outline
 FLAG_WIDTH = 2
 
 
@@ -537,10 +541,13 @@ class WorkflowUI:
         x = min(max(cx + r_px + 12, 8), max(w - 220, 8))
         y = min(max(cy + r_px + 8, 8), max(h - 90, 8))
         pill = tk.Frame(self.viewer.canvas, bd=2, relief=tk.RAISED,
-                        bg="#2e7d32")
+                        bg=THEME["pill_bg"], highlightthickness=2,
+                        highlightbackground=THEME["pill_btn_active"],
+                        highlightcolor=THEME["pill_btn_active"])
         tk.Button(pill, text="CONFIRM\nCORNER", command=self.confirm_click,
-                  bg="#a5d6a7", activebackground="#81c784", fg="#1b5e20",
-                  font=("TkDefaultFont", 16, "bold"), bd=0,
+                  bg=THEME["pill_btn_bg"], activebackground=THEME["pill_btn_active"],
+                  fg=THEME["pill_btn_fg"],
+                  font=theme_font(16, "bold"), bd=0,
                   width=12, height=2, cursor="hand2").pack(
             padx=6, pady=6)
         self.viewer.canvas.create_window(x, y, window=pill, anchor="nw",
@@ -600,11 +607,11 @@ class WorkflowUI:
         elif isinstance(e, PointEnt):
             sx, sy = t.to_screen(e.p)
             c.create_text(sx, sy, text="+", anchor="center", fill=color,
-                          font=("TkDefaultFont", 12, "bold"), tags=(tag,))
+                          font=theme_font(12, "bold"), tags=(tag,))
         elif isinstance(e, TextEnt):
             sx, sy = t.to_screen(e.p)
             c.create_text(sx, sy, text=e.text or " ", anchor="w", fill=color,
-                          font=("TkDefaultFont", 10, "bold"), tags=(tag,))
+                          font=theme_font(10, "bold"), tags=(tag,))
 
     def _draw_preview(self) -> None:
         """Deletion preview: thick red delete/trim, orange flagged, dashed

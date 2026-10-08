@@ -78,6 +78,10 @@ class LoadResult:
     model_state: ModelState
     header: dict = field(default_factory=dict)  # $INSUNITS, $ACADVER
     warnings: list[str] = field(default_factory=list)
+    # M5b auto-preselect: eid -> DXF layer name. Entities don't carry layer
+    # (CONTRACTS §1), so the layer map travels in LoadResult for the UI's
+    # auto-preselect-on-load (case-insensitive contains bend|fold|centerline).
+    layer_of: dict[str, str] = field(default_factory=dict)
 
 
 def _read_doc(path: Path, warnings: list[str]):
@@ -218,6 +222,7 @@ def load(path: Path) -> LoadResult:
     passthrough: list[tuple[int, PassThrough]] = []
     unsupported_raw: list[tuple[int, object]] = []
     order: list[tuple[int, str]] = []  # (index, "prim" | "pass")
+    layer_of: dict[str, str] = {}  # M5b auto-preselect: eid -> DXF layer
 
     for raw in msp:
         t = raw.dxftype()
@@ -227,20 +232,24 @@ def load(path: Path) -> LoadResult:
             s, e = raw.dxf.start, raw.dxf.end
             supported.append(Seg(eid=h, a=Pt(s.x, s.y), b=Pt(e.x, e.y)))
             order.append((idx, "prim"))
+            layer_of[h] = str(raw.dxf.layer)
         elif t == "ARC":
             c = raw.dxf.center
             supported.append(Arc(eid=h, center=Pt(c.x, c.y), r=raw.dxf.radius,
                                   start_deg=raw.dxf.start_angle,
                                   end_deg=raw.dxf.end_angle))
             order.append((idx, "prim"))
+            layer_of[h] = str(raw.dxf.layer)
         elif t == "CIRCLE":
             c = raw.dxf.center
             supported.append(Circ(eid=h, center=Pt(c.x, c.y), r=raw.dxf.radius))
             order.append((idx, "prim"))
+            layer_of[h] = str(raw.dxf.layer)
         elif t == "POINT":
             p = raw.dxf.location
             supported.append(PointEnt(eid=h, p=Pt(p.x, p.y)))
             order.append((idx, "prim"))
+            layer_of[h] = str(raw.dxf.layer)
         elif t == "MTEXT":
             p = raw.dxf.insert
             try:
@@ -249,6 +258,7 @@ def load(path: Path) -> LoadResult:
                 text = raw.text
             supported.append(TextEnt(eid=h, p=Pt(p.x, p.y), text=text))
             order.append((idx, "prim"))
+            layer_of[h] = str(raw.dxf.layer)
         else:
             unsupported_raw.append((idx, raw))
             order.append((idx, "pass"))
@@ -290,16 +300,20 @@ def load(path: Path) -> LoadResult:
     # -- 11.3 case 4: duplicate merge (keep first, count) --
     kept: list[Entity] = []
     dup_count = 0
+    dropped_eids: set[str] = set()
     for e in combined:
         if not isinstance(e, PassThrough) and any(
             type(e) is type(k) and _is_dup(e, k, EPS_COINCIDE) for k in kept
         ):
             dup_count += 1
+            dropped_eids.add(e.eid)
         else:
             kept.append(e)
     if dup_count:
         unit = "entity" if dup_count == 1 else "entities"
         warnings.append(f"merged {dup_count} duplicate {unit} (SPEC 11.3 case 4)")
+    for eid in dropped_eids:
+        layer_of.pop(eid, None)
 
     # -- 11.3 case 5: fold stub --
     warnings.extend(_fold_contour_warnings(kept, set(), EPS_COINCIDE))
@@ -310,4 +324,5 @@ def load(path: Path) -> LoadResult:
         model_state=state,
         header={"$INSUNITS": doc.header.get("$INSUNITS"), "$ACADVER": ver},
         warnings=warnings,
+        layer_of=layer_of,
     )
