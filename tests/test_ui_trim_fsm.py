@@ -205,3 +205,45 @@ def test_trim_fsm_exit_clears_pending():
     fsm.exit()
     assert fsm.pending is None and fsm.picked_eid is None
     assert fsm.mode == TrimMode.OFF
+
+
+def test_trim_panel_done_button_exits_and_hides():
+    import tkinter as tk
+
+    import pytest
+
+    from model.model import Model
+    from model.state import ModelState
+    from ui.canvas_view import Viewer
+    from ui.trim_panel import TrimPanel
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"no display for tkinter: {exc}")
+    root.withdraw()
+    try:
+        viewer = Viewer(root, width=200, height=200)
+        model = Model(ModelState(primitives=[
+            Seg("L1", Pt(0, 0), Pt(100, 0)),
+        ]))
+        viewer.set_model(model.state)
+        panel = TrimPanel(root, viewer, model)
+        assert panel.mode_btn.cget("text") == msg.TRIM_MODE_TOGGLE_ON
+        panel.toggle_mode()
+        assert panel.fsm.mode == TrimMode.ON
+        assert msg.TRIM_MODE_TOGGLE_OFF == "Done"
+        assert panel.mode_btn.cget("text") == msg.TRIM_MODE_TOGGLE_OFF
+        assert panel._done_btn is not None
+        assert panel._done_btn.cget("text") == msg.TRIM_MODE_TOGGLE_OFF
+        assert panel._done_btn.winfo_manager() == "place"
+        info = panel._done_btn.place_info()
+        assert float(info["relx"]) == 0.5
+        assert float(info["rely"]) == 1.0
+        assert info["anchor"] == "s"
+        panel._done_btn.cget("command")()
+        assert panel.fsm.mode == TrimMode.OFF
+        assert panel.mode_btn.cget("text") == msg.TRIM_MODE_TOGGLE_ON
+        assert panel._done_btn.winfo_manager() == ""
+    finally:
+        root.destroy()

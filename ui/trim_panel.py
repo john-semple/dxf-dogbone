@@ -165,6 +165,7 @@ class TrimPorts(Protocol):
 from tkinter import ttk  # noqa: E402
 
 from ui.canvas_view import Viewer  # noqa: E402
+from ui.rounded_button import RoundedButton, quiet_button  # noqa: E402
 
 DELETE_COLOR = THEME["delete"]
 DELETE_WIDTH = 3
@@ -191,6 +192,7 @@ class TrimPanel(ttk.Frame):
         self._saved_bindings: dict[str, str] = {}
         self._pan_from: tuple[float, float] | None = None
         self._pill: tk.Canvas | None = None
+        self._done_btn: RoundedButton | None = None
 
         self.section = CollapsibleSection(self, msg.SECTION_TRIM)
         self.section.pack(fill=tk.X, pady=(0, 6))
@@ -273,6 +275,7 @@ class TrimPanel(ttk.Frame):
         for seq, handler in handlers.items():
             self._saved_bindings[seq] = c.bind(seq)
             c.bind(seq, handler)
+        self._show_done_button()
         self._bound = True
 
     def unbind_canvas(self) -> None:
@@ -284,6 +287,7 @@ class TrimPanel(ttk.Frame):
         self._saved_bindings.clear()
         self._bound = False
         self._pan_from = None
+        self._hide_done_button()
         self._clear_overlays()
 
     def _on_left(self, ev) -> None:
@@ -317,6 +321,20 @@ class TrimPanel(ttk.Frame):
 
     def _on_pan_release(self, _ev) -> None:
         self._pan_from = None
+
+    def _show_done_button(self) -> None:
+        """On-canvas Done while trim mode is on. A placed widget, so pan
+        and redraw leave it put. Same label and exit path as the
+        side-column button."""
+        c = self.viewer.canvas
+        if self._done_btn is None:
+            self._done_btn = quiet_button(
+                c, msg.TRIM_MODE_TOGGLE_OFF, self.toggle_mode)
+        self._done_btn.place(relx=0.5, rely=1.0, anchor="s", y=-20)
+
+    def _hide_done_button(self) -> None:
+        if self._done_btn is not None:
+            self._done_btn.place_forget()
 
     # ----------------------------------------------------------- rendering
     def _clear_overlays(self) -> None:

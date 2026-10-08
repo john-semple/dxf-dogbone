@@ -205,8 +205,19 @@ def test_fold_panel_box_hint_hidden_on_exit():
         assert panel.fsm.mode == FoldMode.ON
         assert msg.FOLD_BOX_HINT == "Right-drag to box-select"
         assert panel._hint.winfo_manager() == "place"
-        panel.toggle_mode()
+        assert msg.FOLD_MODE_TOGGLE_OFF == "Save Selection"
+        assert panel.mode_btn.cget("text") == msg.FOLD_MODE_TOGGLE_OFF
+        assert panel._save_btn is not None
+        assert panel._save_btn.cget("text") == msg.FOLD_MODE_TOGGLE_OFF
+        assert panel._save_btn.winfo_manager() == "place"
+        info = panel._save_btn.place_info()
+        assert float(info["relx"]) == 0.5
+        assert float(info["rely"]) == 1.0
+        assert info["anchor"] == "s"
+        panel._save_btn.cget("command")()
         assert panel.fsm.mode == FoldMode.OFF
+        assert panel.mode_btn.cget("text") == msg.FOLD_MODE_TOGGLE_ON
         assert panel._hint.winfo_manager() == ""
+        assert panel._save_btn.winfo_manager() == ""
     finally:
         root.destroy()

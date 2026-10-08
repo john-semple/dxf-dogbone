@@ -197,6 +197,7 @@ class FoldPorts(Protocol):
 
 from tkinter import ttk  # noqa: E402
 
+from ui.rounded_button import RoundedButton, quiet_button  # noqa: E402
 from ui.theme import COLORS, font as theme_font  # noqa: E402
 from ui.transform import ViewTransform  # noqa: E402
 
@@ -230,6 +231,7 @@ class FoldPanel(ttk.Frame):
         self._pan_from: tuple[float, float] | None = None
         self._box_item: int | None = None
         self._hint: tk.Label | None = None
+        self._save_btn: RoundedButton | None = None
 
         self.section = CollapsibleSection(self, msg.SECTION_FOLDS)
         self.section.pack(fill=tk.X, pady=(0, 6))
@@ -356,6 +358,7 @@ class FoldPanel(ttk.Frame):
             self._saved_bindings[seq] = c.bind(seq)
             c.bind(seq, handler)  # replace: corner workflow is suspended
         self._show_box_hint()
+        self._show_save_button()
         self._bound = True
 
     def _show_box_hint(self) -> None:
@@ -374,6 +377,20 @@ class FoldPanel(ttk.Frame):
         if self._hint is not None:
             self._hint.place_forget()
 
+    def _show_save_button(self) -> None:
+        """On-canvas Save Selection while fold mode is on. A placed
+        widget, same as the hint, so pan and redraw leave it put.
+        Same label and exit path as the side-column button."""
+        c = self.viewer.canvas
+        if self._save_btn is None:
+            self._save_btn = quiet_button(
+                c, msg.FOLD_MODE_TOGGLE_OFF, self.toggle_mode)
+        self._save_btn.place(relx=0.5, rely=1.0, anchor="s", y=-20)
+
+    def _hide_save_button(self) -> None:
+        if self._save_btn is not None:
+            self._save_btn.place_forget()
+
     def unbind_canvas(self) -> None:
         if not self._bound:
             return
@@ -391,6 +408,7 @@ class FoldPanel(ttk.Frame):
         self._pan_from = None
         self._clear_box_preview()
         self._hide_box_hint()
+        self._hide_save_button()
 
     def _fold_handlers(self) -> dict[str, object]:
         return {

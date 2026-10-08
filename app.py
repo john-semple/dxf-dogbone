@@ -19,7 +19,7 @@ from ui.apply_panel import ApplyAllWorkflowUI, ToolPanel
 from ui.canvas_view import Viewer
 from ui.collapsible import Sidebar
 from ui.fold_panel import FoldPanel
-from ui.rounded_button import RoundedButton
+from ui.rounded_button import RoundedButton, quiet_button
 from ui.trim_panel import TrimPanel
 from ui.theme import COLORS as THEME, apply as theme_apply, font as theme_font
 import ui.messages as msg
@@ -227,22 +227,8 @@ class App:
             highlightthickness=0,
         )
         self.empty_label.pack()
-        self.empty_open = RoundedButton(
-            self.empty_hint,
-            text=msg.EMPTY_OPEN,
-            command=self.open_dialog,
-            fill=THEME["empty_btn"],
-            outline=THEME["empty_btn_edge"],
-            active_fill=THEME["empty_btn_hover"],
-            active_outline=THEME["empty_btn_edge_hover"],
-            fg=THEME["empty_btn_fg"],
-            font_size=12,
-            pad_x=22,
-            pad_y=10,
-            radius=8,
-            outline_width=1,
-            canvas_bg=THEME["canvas_bg"],
-        )
+        self.empty_open = quiet_button(
+            self.empty_hint, msg.EMPTY_OPEN, self.open_dialog)
         self.empty_open.pack(pady=(12, 0))
         self._show_empty_hint()
         self.workflow: ApplyAllWorkflowUI | None = None

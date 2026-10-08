@@ -114,7 +114,7 @@ FOLD_MODE_ENTER = ("Fold mode: click a line to designate / undesignate it. "
 FOLD_BOX_HINT = "Right-drag to box-select"
 FOLD_MODE_EXIT = "Exited fold mode."
 FOLD_MODE_TOGGLE_ON = "Designate Folds"
-FOLD_MODE_TOGGLE_OFF = "Exit Fold Mode"
+FOLD_MODE_TOGGLE_OFF = "Save Selection"
 FOLD_BADGE = "{n} of {m} straight lines designated"
 FOLD_PATTERN_LABEL = "Bend import keywords"
 FOLD_PATTERN_HINT = (
@@ -132,7 +132,7 @@ TRIM_MODE_ENTER = ("Trim mode: click the LINE end you want to move — it snaps 
                    "to its closest intersection. Esc exits.")
 TRIM_MODE_EXIT = "Exited trim mode."
 TRIM_MODE_TOGGLE_ON = "Trim to Closest"
-TRIM_MODE_TOGGLE_OFF = "Exit Trim Mode"
+TRIM_MODE_TOGGLE_OFF = "Done"
 TRIM_HINT = (
     "Click a line near the end you want to trim or extend. Ctrl+Z undoes."
 )

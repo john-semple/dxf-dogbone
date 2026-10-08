@@ -34,6 +34,26 @@ def _rounded_points(x1: float, y1: float, x2: float, y2: float,
     )
 
 
+def quiet_button(master: tk.Misc, text: str, command) -> "RoundedButton":
+    """Grey rounded button drawn on the drawing. Same face as Add a DXF."""
+    return RoundedButton(
+        master,
+        text=text,
+        command=command,
+        fill=COLORS["empty_btn"],
+        outline=COLORS["empty_btn_edge"],
+        active_fill=COLORS["empty_btn_hover"],
+        active_outline=COLORS["empty_btn_edge_hover"],
+        fg=COLORS["empty_btn_fg"],
+        font_size=12,
+        pad_x=22,
+        pad_y=10,
+        radius=8,
+        outline_width=1,
+        canvas_bg=COLORS["canvas_bg"],
+    )
+
+
 class RoundedButton(tk.Canvas):
     """Fixed-size rounded button. ``cget('text')`` and ``cget('command')``
     match the ttk button the shell used to pack here.
