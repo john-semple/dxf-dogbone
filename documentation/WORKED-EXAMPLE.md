@@ -1,5 +1,7 @@
 ﻿# Worked Example â€” T-Junction Dogbone (center-right, sample part)
 
+> **Status: Completed**
+
 Binding numeric trace for M2. All values verified: every claimed point lies on the dogbone circle at distance R Â± 5e-5, arc endpoints equal rebuilt edge endpoints, and the apex is strictly interior to the arc span (never an endpoint). Coordinates in mm, printed to 5 decimals. **Where this file and CONTRACTS.md disagree, CONTRACTS.md wins (AGENTS.md canon).**
 
 ## Geometry inputs (from `base-rectangular-before-AI.DXF`)

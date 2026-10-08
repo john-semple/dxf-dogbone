@@ -1,5 +1,7 @@
 # Brief — SAMPLES-GEN: Synthetic DXF Test Set (agent-executable)
 
+> **Status: Completed**
+
 **Role:** generate deterministic synthetic DXF test files. Implement the exact geometry below; do NOT redesign it.
 **Files you own:** `tools/gen_samples.py`, `samples/` (synthetic files only), `documentation/SAMPLES-SYN.md` (manifest auto-generated from reload output — never hand-typed numbers).
 **Forbidden:** touching the user-provided SolidWorks golden pair, app code, `tests/`, any other doc.

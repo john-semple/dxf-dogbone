@@ -155,8 +155,8 @@ class TestSnapshotStackBasics:
 
     def test_snapshots_revert_restores_original_clears_flags_empties(self):
         """ADR-009: Revert-to-Original = load snapshot + flag_decisions
-        cleared + undo stack emptied (no redo in V1; the Revert button
-        itself stays enabled)."""
+        cleared + undo and redo stacks emptied (ADR-027; the Revert
+        button itself stays enabled)."""
         model = Model(_two_corner_state())
         stack = SnapshotStack(model)
         stack.push_load()
@@ -171,6 +171,7 @@ class TestSnapshotStackBasics:
         assert model.state == original
         assert model.state.flag_decisions == {}
         assert not stack.can_undo()
+        assert not stack.can_redo()
 
     def test_snapshots_revert_with_no_load_is_noop(self):
         model = Model(_two_corner_state())
@@ -213,3 +214,88 @@ class TestSnapshotStackBasics:
         assert stack.undo()
         assert not stack.can_undo()
         assert model.state.dogbones == []
+
+
+class TestSnapshotRedo:
+    """ADR-027: undo keeps the state it leaves; redo restores it."""
+
+    def _applied(self):
+        model = Model(_two_corner_state())
+        stack = SnapshotStack(model)
+        stack.push_load()
+        res = _place(model)
+        assert res.ok, res.refusals
+        stack.push()
+        model.apply_corner(res)
+        applied = model.snapshot()
+        return model, stack, applied
+
+    def test_snapshots_undo_then_redo_restores_applied_state(self):
+        model, stack, applied = self._applied()
+        # one undo returns to the pre-apply snapshot (load seed is below)
+        assert stack.undo()
+        assert model.state != applied
+        assert stack.can_redo()
+        assert stack.redo()
+        assert model.state == applied
+        assert not stack.can_redo()
+
+    def test_snapshots_multi_undo_redo_roundtrip(self):
+        model, stack, first = self._applied()
+        res2 = _place_second(model)
+        assert res2.ok, res2.refusals
+        stack.push()
+        model.apply_corner(res2)
+        both = model.snapshot()
+        assert stack.undo()  # back to first apply only
+        assert stack.undo()  # back to pre-apply
+        assert model.state != first
+        assert stack.redo()
+        assert model.state == first
+        assert stack.can_redo()
+        assert stack.redo()
+        assert model.state == both
+        assert not stack.can_redo()
+
+    def test_snapshots_new_push_clears_redo(self):
+        model, stack, applied = self._applied()
+        assert stack.undo()
+        assert stack.can_redo()
+        held = model.snapshot()
+        stack.push()  # a new edit abandons the undone branch
+        assert not stack.can_redo()
+        assert not stack.redo()
+        assert model.state == held
+        assert model.state != applied
+
+    def test_snapshots_revert_clears_redo(self):
+        model, stack, _applied = self._applied()
+        assert stack.undo()
+        assert stack.can_redo()
+        stack.revert()
+        assert not stack.can_undo()
+        assert not stack.can_redo()
+        assert not stack.redo()
+
+    def test_snapshots_discard_redo_on_non_step_edit(self):
+        model, stack, _applied = self._applied()
+        assert stack.undo()
+        assert stack.can_redo()
+        stack.discard_redo()
+        assert not stack.can_redo()
+        assert not stack.redo()
+
+    def test_snapshots_redo_at_empty_is_noop(self):
+        model, stack, applied = self._applied()
+        assert not stack.can_redo()
+        assert not stack.redo()
+        assert model.state == applied
+
+    def test_snapshots_redo_entry_is_independent_copy(self):
+        model, stack, applied = self._applied()
+        assert stack.undo()
+        # mutate the restored model; the redo entry must stay the applied state
+        model.state.flag_decisions["H"] = "keep"
+        assert stack.redo()
+        assert model.state == applied
+        assert "H" not in model.state.flag_decisions

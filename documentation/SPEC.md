@@ -1,10 +1,11 @@
 # DXF Dogbone Tool — Project Specification & Agent Context
 
+> **Status: Mostly completed**
+
 **Project:** DXF corner radiusing / dogbone tool for SolidWorks sheet metal flat patterns
 **Target user:** Solo machinist using SolidWorks sheet metal → DXF flat pattern export → Fusion 360 CAM
 **Platform:** Windows (native Python, no WSL needed)
 **Language:** Python 3, minimal dependencies (`ezdxf` + stdlib tkinter)
-**Status:** Spec agreed 2026-09-28. Code not yet written.
 
 ---
 
@@ -65,7 +66,7 @@ Manual corner add: **user explicitly clicks the two edges** (user input is the s
 ## 5. GUI Behavior
 
 - **Canvas:** pan/zoom, hover highlight, clickable entities, ghost previews, red deletion highlight.
-- **Undo model:** toggle multiple corners → all pending changes previewed → single **Apply All** → **snapshot-stack Undo** (multiple undos permitted; per §11.7 which supersedes the earlier single-level plan) + **Revert to Original** (nuclear option).
+- **Undo model:** toggle multiple corners → all pending changes previewed → single **Apply All** → **snapshot-stack Undo** (multiple undos permitted; per §11.7 which supersedes the earlier single-level plan) + **Revert to Original** (nuclear option). Undo of an Apply All puts that batch back on the pending list; each further Undo removes the newest queued corner (§11.7, ADR-029).
 - **Final export step:** a **final DXF preview with OK / Back buttons** before writing the file; filename entered here.
 
 ## 6. Unsupported Entities
@@ -183,6 +184,8 @@ For each entity in the 4×-diameter window (window is a **prefilter only** — t
 
 **Flagged-entity flow (v3, ADR-009/013):** states {pending → delete | keep | trim}. `Flag(eid, reason, options, decision)` — options per case (ARC chord-crosser offers trim-to-sub-arc; trim yields a Trim like any other). A non-pending decision is **sticky per entity eid** for the session (stored in `ModelState.flag_decisions`, travels in snapshots, restored by undo; cleared only by Revert-to-Original). Recompute honors existing decisions — no repeated prompts across corners. On keep: intersection check of the kept entity against every applied circle; overlap beyond tangency ⇒ non-blocking warning in the preview summary ("kept CIRCLE intersects dogbone 2"). Chord-crosser override text states the consequence: "kept entity will cross the relief cut." Confirm-gate blocks only while any flag is pending.
 
+**Flag prompt (shell, 2026-10-08):** interactive flag decisions use the canvas card in `ui/workflow.py`, not a centered Yes/No box. One line of copy, a `{n}/{m}` count at the top right, then Delete and Keep. Chord-crossers are asked first. Placement, highlight, and click handling are specified in `documentation/sessions/2026-10-08-CHORD-PROMPT.md` (ISSUE-022). The card does not take the click itself; the viewer canvas does, so a click counts without moving the pointer and without a pause before Confirm. The button under that pointer is already the lighter grey when the card is drawn. The headless harness still resolves every flag through `_prompt_pending_flags`. Sticky decisions and the confirm-gate are unchanged. The card offers Delete and Keep only; ARC trim stays engine-scripted.
+
 ### 11.6 Export semantics (hardened §4.5)
 
 - Export operates on a **deep copy** of the working document; the working model is immutable under export.
@@ -190,9 +193,10 @@ For each entity in the 4×-diameter window (window is a **prefilter only** — t
 - Fold rule (deterministic): extend along line direction to the **first** dogbone-circle intersection; if none within **max 2× deletion window**, leave unchanged and warn. Trim at first circle entry from the kept side.
 - Pre-write automated gate: `ezdxf.audit` clean; output version == input version; original file checksum unchanged.
 
-### 11.7 State / undo (ADR-001)
+### 11.7 State / undo (ADR-001, queue history ADR-029)
 
-- Model = ordered list of primitive entities. **Snapshot stack** (deep copy per Apply All — documents are tiny). Single undo = swap to previous snapshot; multiple undos allowed (replaces "single-level"); Revert-to-Original = swap to load snapshot. No per-operation deltas.
+- Model = ordered list of primitive entities. **Snapshot stack** (deep copy per Apply All — documents are tiny). Single undo of the drawing = swap to previous snapshot; multiple undos allowed (replaces "single-level"); Revert-to-Original = swap to load snapshot. No per-operation deltas. Redo (ADR-027) keeps the state undo leaves.
+- The pending queue is not part of that snapshot (ADR-016(j)). Undo removes the newest queued corner while nothing has changed the drawing since that confirm. Undo of an Apply All restores the pre-apply drawing and puts that batch back on the queue (skipped corners included); further Undos remove those corners newest-first. Redo of that Apply All puts the dogbones back and takes those corners off the list. An Apply All that changes nothing (every corner skipped) drops the queue and Undo does not restore it. Revert-to-Original still keeps the queue and forgets this undo history. Opening another file or clearing the session clears both.
 - Overlap check at confirm time: warn + skip second dogbone (unchanged §4.4). Shrink-to-fit and per-dogbone removal are V1.1.
 
 ### 11.8 UX requirements (from user review)

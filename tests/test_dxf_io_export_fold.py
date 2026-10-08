@@ -43,7 +43,8 @@ def _state_with_fold(fold, db, fold_eids=None):
 
 def test_dxf_io_export_fold_moves_to_fold_lines_layer_with_color_7(tmp_path):
     """Designated fold eids move to FOLD_LINES with color 7 (FOLD_COLOR_CONST);
-    non-fold entities keep layer 0 / no explicit color."""
+    non-fold entities stay on layer 0 and are written ACI 7 (load does not
+    keep per-entity color; the sample files are uniformly ACI 7)."""
     db = _db(Pt(46.12253, 50.39427), 1.5875)
     fold = Seg(eid="F1", a=Pt(40.0, 51.2634), b=Pt(0.0, 51.2634))
     contour = Seg(eid="C1", a=Pt(0.0, 80.0), b=Pt(100.0, 80.0))  # non-fold, far
@@ -68,9 +69,10 @@ def test_dxf_io_export_fold_moves_to_fold_lines_layer_with_color_7(tmp_path):
     fold_lines = by_layer["FOLD_LINES"]
     assert len(fold_lines) == 1
     assert fold_lines[0].dxf.color == FOLD_COLOR_CONST
-    # the contour is on layer 0 (not FOLD_LINES)
+    # the contour is on layer 0 (not FOLD_LINES), ACI 7
     assert "0" in by_layer
     assert len(by_layer["0"]) == 1
+    assert by_layer["0"][0].dxf.color == FOLD_COLOR_CONST
 
 
 def test_dxf_io_export_purity_working_model_unchanged(tmp_path):

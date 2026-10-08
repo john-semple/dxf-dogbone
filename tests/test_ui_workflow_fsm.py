@@ -135,6 +135,8 @@ def test_fsm_ghost_refusal_verbatim_and_stay_pick_edge2():
     assert fsm.state == WorkflowState.PICK_EDGE2
     assert fsm.refusals == [reason]
     assert reason in fsm.inline  # engine string verbatim in the toast
+    assert "Press Esc to cancel." in fsm.status
+    assert fsm.edge1_eid == "A"
 
 
 def test_fsm_pick_ghost_places_preview():

@@ -20,6 +20,7 @@ from ui.fold_panel import (
     DEFAULT_FOLD_PATTERNS,
     FoldFSM,
     FoldMode,
+    FoldPanel,
 )
 
 
@@ -79,6 +80,9 @@ def test_fold_fsm_toggle_mode_on_off():
     fsm.enter()
     assert fsm.mode == FoldMode.ON
     assert msg.FOLD_MODE_ENTER in fsm.status
+    assert "Middle-drag" not in fsm.status
+    assert "Drag pans" in fsm.status
+    assert "right-drag box-selects" in fsm.status
     fsm.exit()
     assert fsm.mode == FoldMode.OFF
     assert fsm._box_start is None  # no partial state
@@ -355,5 +359,26 @@ def test_fold_panel_box_select_px_constant_is_5():
 
 
 def test_fold_panel_default_patterns():
-    """ISSUE-003 defaults: bend, fold, centerline."""
+    """ISSUE-003 defaults: bend, fold, centerline. The entry keeps that
+    text under the bend-import label."""
+    import tkinter as tk
+
+    import pytest
+
     assert DEFAULT_FOLD_PATTERNS == ("bend", "fold", "centerline")
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"no display for tkinter: {exc}")
+    root.withdraw()
+    try:
+        panel = FoldPanel(root, None, None)
+        assert panel.pattern_label.cget("text") == "Bend import keywords"
+        assert panel.pattern_label.cget("text") == msg.FOLD_PATTERN_LABEL
+        assert panel.pattern_entry.get() == "bend, fold, centerline"
+        assert panel.pattern_hint.cget("text") == msg.FOLD_PATTERN_HINT
+        assert panel.layer_heading.cget("text") == "Layers with straight lines"
+        assert panel.layer_hint.cget("text") == msg.FOLD_LAYER_HINT
+        assert panel.layer_heading.winfo_manager() == ""
+    finally:
+        root.destroy()

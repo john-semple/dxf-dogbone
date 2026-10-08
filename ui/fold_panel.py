@@ -12,16 +12,18 @@ directly and the shell is a thin binding):
   point, and the badge count. No tkinter import.
 * ``FoldPorts`` — the engine/model boundary (pick a straight LINE near a
   world point; validate a fold against contours; mutate fold_eids).
-* ``FoldPanel`` — the tkinter shell: mode toggle button, pattern entry,
-  badge label; binds canvas events (click / shift-click / drag / Esc) and
-  converts them into FSM events. No geometry math (ADR-006).
+* ``FoldPanel`` — the tkinter shell: mode toggle button, keyword entry,
+  one checkbox per layer that has straight lines, badge label; binds
+  canvas events (left-click / left-drag pan / right-drag box-select /
+  Esc) and converts them into FSM events. No geometry math (ADR-006).
 
 Mode isolation is by binding REPLACEMENT: while fold mode is ON, the
 fold panel's handlers REPLACE the canvas's B1/Button-3/Escape scripts
 (prior scripts saved + restored on exit — Tk's unbind() would delete
 every handler for a sequence, including the Viewer's pan and the corner
-workflow's picks). In fold mode: L-click/box = designate, MIDDLE-drag =
-pan, wheel = zoom. The corner workflow runs only when fold mode is OFF.
+workflow's picks). In fold mode: a left click toggles one line, a left
+drag pans, a right drag box-selects, wheel zooms. Esc exits. The corner
+workflow runs only when fold mode is OFF.
 
 Auto-preselect (ISSUE-003 defaults): at load, straight LINEs whose layer
 name case-insensitively contains any of ``bend | fold | centerline`` are
@@ -43,6 +45,7 @@ from typing import Protocol
 from geometry.entities import Entity, PassThrough, Pt, Seg
 from geometry.tolerances import EPS_COINCIDE
 from rules.folds import validate_fold_against_contours
+from ui.collapsible import CollapsibleSection
 import ui.messages as msg
 
 # ISSUE-003 defaults: case-insensitive contains any of these.
@@ -194,13 +197,13 @@ class FoldPorts(Protocol):
 
 from tkinter import ttk  # noqa: E402
 
-from ui.theme import COLORS as THEME, font as theme_font  # noqa: E402
+from ui.theme import COLORS, font as theme_font  # noqa: E402
 from ui.transform import ViewTransform  # noqa: E402
 
 
 class FoldPanel(ttk.Frame):
-    """Left-side panel: mode toggle, pattern entry, badge. Thin shell —
-    binds canvas events in fold mode and converts them to FSM events.
+    """Left-side panel: mode toggle, keyword entry, layer checks, badge.
+    Thin shell — binds canvas events in fold mode and converts them to FSM events.
 
     The panel does NOT own canvas bindings permanently; the App installs
     them via ``bind_canvas`` / ``unbind_canvas`` when the mode toggles so
@@ -209,40 +212,73 @@ class FoldPanel(ttk.Frame):
 
     def __init__(self, master, viewer, model, on_status=None,
                  patterns: tuple[str, ...] = DEFAULT_FOLD_PATTERNS):
-        super().__init__(master, style="TFrame", padding=(10, 10))
+        super().__init__(master, style="TFrame")
         self.viewer = viewer
         self.model = model  # may be None at construction; set via on_load
         self._on_status = on_status
         self._patterns = list(patterns)
         self.fsm = FoldFSM(ports=self)
+        self.stack = None  # SnapshotStack, set when the workflow is built
         self._bound = False
         self._box_start_screen: tuple[float, float] | None = None
         # Tk's unbind(seq) deletes EVERY handler for a sequence, not just
         # ours — the scripts present before fold mode are saved here and
         # restored verbatim on exit (the only safe teardown).
         self._saved_bindings: dict[str, str] = {}
-        self._pan_from: tuple[float, float] | None = None  # middle-drag pan
+        self._left_start: tuple[float, float] | None = None
+        self._left_panned = False
+        self._pan_from: tuple[float, float] | None = None
+        self._box_item: int | None = None
+        self._hint: tk.Label | None = None
 
-        ttk.Label(self, text="Folds", style="TLabel",
-                  font=theme_font(10, "bold")).pack(anchor="w", pady=(0, 6))
+        self.section = CollapsibleSection(self, msg.SECTION_FOLDS)
+        self.section.pack(fill=tk.X, pady=(0, 6))
+        body = self.section.body
 
-        self.mode_btn = ttk.Button(self, text=msg.FOLD_MODE_TOGGLE_ON,
-                                   style="TButton",
+        self.mode_btn = ttk.Button(body, text=msg.FOLD_MODE_TOGGLE_ON,
+                                   style="FoldMode.TButton",
                                    command=self.toggle_mode)
         self.mode_btn.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(self, text=msg.FOLD_PATTERN_LABEL,
-                  style="TLabel").pack(anchor="w")
-        self.pattern_var = tk.StringVar(value=", ".join(self._patterns))
-        pattern_entry = ttk.Entry(self, textvariable=self.pattern_var,
-                                  width=22, font=theme_font(9))
-        pattern_entry.pack(fill=tk.X, pady=(2, 0))
-        pattern_entry.bind("<FocusOut>", self._patterns_edited)
-        pattern_entry.bind("<Return>", self._patterns_edited)
+        self.pattern_label = ttk.Label(body, text=msg.FOLD_PATTERN_LABEL,
+                                       style="TLabel")
+        self.pattern_label.pack(anchor="w")
+        self.pattern_hint = tk.Label(
+            body, text=msg.FOLD_PATTERN_HINT,
+            bg=COLORS["bg"], fg=COLORS["fg_muted"],
+            font=theme_font(9), wraplength=248, justify="left", anchor="w",
+        )
+        self.pattern_hint.pack(anchor="w", fill=tk.X, pady=(2, 0))
+        self.pattern_var = tk.StringVar(
+            master=self, value=", ".join(self._patterns))
+        self.pattern_entry = ttk.Entry(body, textvariable=self.pattern_var,
+                                       width=22, font=theme_font(9))
+        self.pattern_entry.pack(fill=tk.X, pady=(2, 0))
+        self.pattern_entry.bind("<FocusOut>", self._patterns_edited)
+        self.pattern_entry.bind("<Return>", self._patterns_edited)
 
-        self.badge_var = tk.StringVar(value="")
-        self.badge_label = ttk.Label(self, textvariable=self.badge_var,
-                                     style="StatusBold.TLabel")
+        self._layer_of: dict[str, str] = {}
+        self._layer_vars: dict[str, tk.BooleanVar] = {}
+        self._layer_buttons: dict[str, ttk.Checkbutton] = {}
+        self._layer_key: list[tuple[str, int]] | None = None
+        self._layer_sync = False
+        self._layer_rule = ttk.Separator(body, orient="horizontal")
+        self.layer_heading = tk.Label(
+            body, text=msg.FOLD_LAYER_HEADING,
+            bg=COLORS["bg"], fg=COLORS["fg"],
+            font=theme_font(9), anchor="w",
+        )
+        self.layer_hint = tk.Label(
+            body, text=msg.FOLD_LAYER_HINT,
+            bg=COLORS["bg"], fg=COLORS["fg_muted"],
+            font=theme_font(9), wraplength=248, justify="left", anchor="w",
+        )
+        self._layer_rows = ttk.Frame(body, style="TFrame")
+        self._layer_rows.pack(fill=tk.X, pady=(2, 0))
+
+        self.badge_var = tk.StringVar(master=self, value="")
+        self.badge_label = ttk.Label(body, textvariable=self.badge_var,
+                                     style="TLabel")
         self.badge_label.pack(anchor="w", pady=(8, 0))
         self._refresh_badge()
 
@@ -293,11 +329,16 @@ class FoldPanel(ttk.Frame):
 
     def _refresh_badge(self) -> None:
         self.badge_var.set(self.fsm.badge_text)
+        summary = f"{len(self.fsm.fold_eids)}/{self.fsm.straight_count}"
+        if self.fsm.mode == FoldMode.ON:
+            summary += f"  ·  {msg.SECTION_MODE_ON}"
+        self.section.set_summary(summary)
         self.mode_btn.config(
             text=(msg.FOLD_MODE_TOGGLE_OFF if self.fsm.mode == FoldMode.ON
                   else msg.FOLD_MODE_TOGGLE_ON))
         if self._on_status is not None:
             self._on_status(self.fsm.status)
+        self._sync_layer_checks()
 
     # ------------------------------------------------------- canvas events
     def bind_canvas(self) -> None:
@@ -305,41 +346,33 @@ class FoldPanel(ttk.Frame):
         REPLACEMENT (not add=True): Tk runs every add=True handler, so an
         added fold handler would let the corner workflow pick edges
         while the user designates folds. Fold mode replaces the B1 /
-        Button-3 / Escape scripts (saved for verbatim restore on exit);
-        wheel-zoom stays (untouched binding) and middle-drag pans."""
+        Button-3 / Escape scripts (saved for verbatim restore on exit).
+        A left click toggles a line, a left drag pans, a right drag
+        box-selects. Wheel-zoom stays."""
         if self._bound:
             return
         c = self.viewer.canvas
-        handlers = self._fold_handlers()
-        for seq in ("<ButtonPress-2>", "<B2-Motion>", "<ButtonRelease-2>"):
-            handlers[seq] = self._pan_handler(seq)
-        for seq, handler in handlers.items():
+        for seq, handler in self._fold_handlers().items():
             self._saved_bindings[seq] = c.bind(seq)
             c.bind(seq, handler)  # replace: corner workflow is suspended
+        self._show_box_hint()
         self._bound = True
 
-    def _pan_handler(self, seq: str):
-        return {
-            "<ButtonPress-2>": self._on_pan_press,
-            "<B2-Motion>": self._on_pan_drag,
-            "<ButtonRelease-2>": self._on_pan_release,
-        }[seq]
+    def _show_box_hint(self) -> None:
+        """On-canvas hint while fold mode is on. A placed widget, not a
+        canvas item: canvas.move("all") would carry an item away on pan."""
+        c = self.viewer.canvas
+        if self._hint is None:
+            self._hint = tk.Label(
+                c, text=msg.FOLD_BOX_HINT,
+                bg=COLORS["bg_elevated"], fg=COLORS["fg"],
+                font=theme_font(9), padx=8, pady=2,
+            )
+        self._hint.place(relx=0.5, rely=0, anchor="n")
 
-    def _on_pan_press(self, ev) -> None:
-        self._pan_from = (ev.x, ev.y)
-
-    def _on_pan_drag(self, ev) -> None:
-        if self._pan_from is None:
-            return
-        dx, dy = ev.x - self._pan_from[0], ev.y - self._pan_from[1]
-        if dx == 0 and dy == 0:
-            return
-        self._pan_from = (ev.x, ev.y)
-        self.viewer.canvas.move("all", dx, dy)
-        self.viewer.transform = self.viewer.transform.panned_by(dx, dy)
-
-    def _on_pan_release(self, _ev) -> None:
-        self._pan_from = None
+    def _hide_box_hint(self) -> None:
+        if self._hint is not None:
+            self._hint.place_forget()
 
     def unbind_canvas(self) -> None:
         if not self._bound:
@@ -353,56 +386,137 @@ class FoldPanel(ttk.Frame):
         self._saved_bindings.clear()
         self._bound = False
         self._box_start_screen = None
+        self._left_start = None
+        self._left_panned = False
         self._pan_from = None
+        self._clear_box_preview()
+        self._hide_box_hint()
 
     def _fold_handlers(self) -> dict[str, object]:
         return {
-            "<ButtonPress-1>": self._on_press,
-            "<B1-Motion>": self._on_drag,
-            "<ButtonRelease-1>": self._on_release,
-            "<Shift-ButtonPress-1>": self._on_press,
-            "<Shift-B1-Motion>": self._on_drag,
-            "<Shift-ButtonRelease-1>": self._on_release,
-            "<Button-3>": self._on_right,
+            "<ButtonPress-1>": self._on_left_press,
+            "<B1-Motion>": self._on_left_drag,
+            "<ButtonRelease-1>": self._on_left_release,
+            "<Shift-ButtonPress-1>": self._on_left_press,
+            "<Shift-B1-Motion>": self._on_left_drag,
+            "<Shift-ButtonRelease-1>": self._on_left_release,
+            "<Button-3>": self._on_right_press,
+            "<B3-Motion>": self._on_right_drag,
+            "<ButtonRelease-3>": self._on_right_release,
+            "<Shift-Button-3>": self._on_right_press,
+            "<Shift-B3-Motion>": self._on_right_drag,
+            "<Shift-ButtonRelease-3>": self._on_right_release,
             "<Escape>": self._on_esc,
         }
 
-    def _on_press(self, ev) -> None:
-        # record the screen start (box-select threshold check on release)
+    def _on_left_press(self, ev) -> None:
+        self._left_start = (ev.x, ev.y)
+        self._left_panned = False
+        self._pan_from = None
+
+    def _on_left_drag(self, ev) -> None:
+        """Pan once the pointer has moved BOX_SELECT_PX. A shorter move
+        stays a click and does not shift the drawing."""
+        if self._left_start is None:
+            return
+        if not self._left_panned:
+            sx, sy = self._left_start
+            if math.hypot(ev.x - sx, ev.y - sy) < BOX_SELECT_PX:
+                return
+            self._left_panned = True
+            self._pan_from = self._left_start
+        if self._pan_from is None:
+            return
+        dx, dy = ev.x - self._pan_from[0], ev.y - self._pan_from[1]
+        if dx == 0 and dy == 0:
+            return
+        self._pan_from = (ev.x, ev.y)
+        self.viewer.canvas.move("all", dx, dy)
+        self.viewer.transform = self.viewer.transform.panned_by(dx, dy)
+
+    def _on_left_release(self, ev) -> None:
+        if self._left_start is None:
+            return
+        panned = self._left_panned
+        self._left_start = None
+        self._left_panned = False
+        self._pan_from = None
+        if panned:
+            return
+        before = self._fold_eids_before()
+        self.fsm.click_world(
+            self.viewer.transform.to_world(ev.x, ev.y),
+            shift=bool(ev.state & 0x1))
+        self._note_designation(before)
+
+    def _on_right_press(self, ev) -> None:
         self._box_start_screen = (ev.x, ev.y)
+        self._clear_box_preview()
 
-    def _on_drag(self, _ev) -> None:
-        pass  # the box resolves on release (V1: no live box preview)
-
-    def _on_release(self, ev) -> None:
+    def _on_right_drag(self, ev) -> None:
+        """Rubber-band the selection box in screen space. The designation
+        still resolves on release."""
         if self._box_start_screen is None:
+            return
+        sx, sy = self._box_start_screen
+        c = self.viewer.canvas
+        if self._box_item is None:
+            self._box_item = c.create_rectangle(
+                sx, sy, ev.x, ev.y,
+                outline=COLORS["fold_designated"],
+                fill=COLORS["fold_designated"],
+                stipple="gray25",
+                dash=(3, 3),
+                width=1,
+            )
+        else:
+            c.coords(self._box_item, sx, sy, ev.x, ev.y)
+
+    def _clear_box_preview(self) -> None:
+        if self._box_item is None:
+            return
+        self.viewer.canvas.delete(self._box_item)
+        self._box_item = None
+
+    def _on_right_release(self, ev) -> None:
+        """A right drag of at least BOX_SELECT_PX toggles every straight
+        line in the box. A shorter right click does not toggle and does
+        not leave fold mode."""
+        if self._box_start_screen is None:
+            self._clear_box_preview()
             return
         sx0, sy0 = self._box_start_screen
         self._box_start_screen = None
-        dx = ev.x - sx0
-        dy = ev.y - sy0
-        moved = math.hypot(dx, dy)
-        shift = bool(ev.state & 0x1)  # Shift modifier bit
+        self._clear_box_preview()
+        if math.hypot(ev.x - sx0, ev.y - sy0) < BOX_SELECT_PX:
+            return
+        before = self._fold_eids_before()
         t = self.viewer.transform
-        if moved >= BOX_SELECT_PX:
-            p_lo = t.to_world(sx0, sy0)
-            p_hi = t.to_world(ev.x, ev.y)
-            self.fsm.box_select(p_lo, p_hi, shift=shift)
-        else:
-            w = t.to_world(ev.x, ev.y)
-            self.fsm.click_world(w, shift=shift)
+        self.fsm.box_select(
+            t.to_world(sx0, sy0), t.to_world(ev.x, ev.y),
+            shift=bool(ev.state & 0x1))
+        self._note_designation(before)
+
+    def _fold_eids_before(self) -> set[str]:
+        if self.model is None:
+            return set()
+        return set(self.model.state.fold_eids)
+
+    def _note_designation(self, before: set[str]) -> None:
+        """A user designation is not its own undo step. If it changed the
+        set, the redo branch (saved by a prior undo) is abandoned.
+        on_model_change syncs folds without coming through here, so an
+        undo/redo refresh does not clear the branch it just created."""
+        if (self.stack is not None and self.model is not None
+                and self.model.state.fold_eids != before):
+            self.stack.discard_redo()
         self._refresh_badge()
 
-    def _on_right(self, _ev) -> None:
-        """Right-click = exit fold mode cleanly (no partial state)."""
+    def _on_esc(self, _ev) -> str:
         self.fsm.exit()
         self.unbind_canvas()
         self._refresh_badge()
-
-    def _on_esc(self, _ev) -> None:
-        self.fsm.exit()
-        self.unbind_canvas()
-        self._refresh_badge()
+        return "break"
 
     # ----------------------------------------------------------- patterns
     def _patterns_edited(self, _ev) -> None:
@@ -419,16 +533,115 @@ class FoldPanel(ttk.Frame):
         authoritative)."""
         if self.model is None:
             return
+        self._layer_of = dict(layer_of)
         self.fsm.fold_eids = set()
         self.fsm.auto_preselect(
-            self.model.state.primitives, layer_of, self.patterns())
+            self.model.state.primitives, self._layer_of, self.patterns())
         self._refresh_badge()
 
     def on_model_change(self) -> None:
-        """Refresh the badge on undo/restore (fold_eids travel in
-        snapshots — restore may have changed them)."""
+        """Refresh the badge and layer checks on undo/restore
+        (fold_eids travel in snapshots — restore may have changed them).
+        Does not re-fire auto-preselect."""
         if self.model is None:
             return
         self.fsm.fold_eids = set(self.model.state.fold_eids)
         self.fsm.set_primitives(self.model.state.primitives)
         self._refresh_badge()
+
+    def _layers_with_segs(self) -> list[tuple[str, list[str]]]:
+        """Distinct layers that contain a straight line, in the order
+        those layer names first appear in ``layer_of``."""
+        if self.model is None:
+            return []
+        seg_ids = {
+            e.eid for e in self.model.state.primitives if isinstance(e, Seg)
+        }
+        order: list[str] = []
+        buckets: dict[str, list[str]] = {}
+        for eid, name in self._layer_of.items():
+            if name not in buckets:
+                order.append(name)
+                buckets[name] = []
+            if eid in seg_ids:
+                buckets[name].append(eid)
+        return [(name, buckets[name]) for name in order if buckets[name]]
+
+    def _layer_fully_on(self, eids: list[str]) -> bool:
+        """Checked only when every straight line on the layer is designated.
+        A mixed layer stays unchecked until the user clicks it."""
+        return bool(eids) and all(eid in self.fsm.fold_eids for eid in eids)
+
+    def _sync_layer_checks(self) -> None:
+        rows = self._layers_with_segs()
+        key = [(name, len(eids)) for name, eids in rows]
+        self._show_layer_header(bool(rows))
+        if key != self._layer_key:
+            self._rebuild_layer_rows(rows)
+            return
+        self._layer_sync = True
+        try:
+            for name, eids in rows:
+                self._layer_vars[name].set(self._layer_fully_on(eids))
+        finally:
+            self._layer_sync = False
+
+    def _rebuild_layer_rows(self, rows: list[tuple[str, list[str]]]) -> None:
+        self._layer_sync = True
+        try:
+            for child in self._layer_rows.winfo_children():
+                child.destroy()
+            self._layer_vars = {}
+            self._layer_buttons = {}
+            for name, eids in rows:
+                var = tk.BooleanVar(
+                    master=self, value=self._layer_fully_on(eids))
+                btn = ttk.Checkbutton(
+                    self._layer_rows,
+                    text=msg.FOLD_LAYER_ROW.format(name=name, count=len(eids)),
+                    variable=var,
+                    command=lambda n=name: self._on_layer_toggle(n),
+                )
+                btn.pack(anchor="w", fill=tk.X, padx=(4, 0))
+                self._layer_vars[name] = var
+                self._layer_buttons[name] = btn
+            self._layer_key = [(name, len(eids)) for name, eids in rows]
+        finally:
+            self._layer_sync = False
+
+    def _show_layer_header(self, show: bool) -> None:
+        """The layer group is a separate block from the import keywords.
+        With no straight-line layers, the heading stays hidden."""
+        if show:
+            if self.layer_heading.winfo_manager():
+                return
+            self._layer_rule.pack(fill=tk.X, pady=(10, 0), before=self._layer_rows)
+            self.layer_heading.pack(anchor="w", pady=(8, 0), before=self._layer_rows)
+            self.layer_hint.pack(
+                anchor="w", fill=tk.X, pady=(2, 2), before=self._layer_rows)
+            return
+        for widget in (self._layer_rule, self.layer_heading, self.layer_hint):
+            if widget.winfo_manager():
+                widget.pack_forget()
+
+    def _on_layer_toggle(self, layer: str) -> None:
+        """Check adds every straight line on the layer. Uncheck removes
+        them. A mixed layer is shown unchecked, so its first click adds
+        them all. Same undo treatment as a canvas designation."""
+        if self._layer_sync or layer not in self._layer_vars:
+            return
+        want_on = bool(self._layer_vars[layer].get())
+        eids: set[str] = set()
+        for name, members in self._layers_with_segs():
+            if name == layer:
+                eids = set(members)
+                break
+        before = self._fold_eids_before()
+        current = set(self.fsm.fold_eids)
+        if want_on:
+            current |= eids
+        else:
+            current -= eids
+        self.fsm.fold_eids = current
+        self.set_fold_eids(current)
+        self._note_designation(before)

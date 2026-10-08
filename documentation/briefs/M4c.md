@@ -1,7 +1,8 @@
 # Brief — M4c: Guided Dogbone Tour (sequential walk)
 
-**Status: planned 2026-10-07 (ADR-022 sprint-start Q&A; supersedes the first-draft
-M4b Feature B text per ADR-019's split ruling).**
+> **Status: Not started**
+
+Planned 2026-10-07 (ADR-022 sprint-start Q&A; supersedes the first-draft M4b Feature B text per ADR-019's split ruling).
 
 **Registers:** ISSUE-019 (guided tour), ISSUE-010 (joint auto-detection — now
 designed, owned by M4c1), ADR-009 amendment (e) (narrow, tour-scoped allow-all).

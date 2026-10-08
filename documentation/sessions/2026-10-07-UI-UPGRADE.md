@@ -1,5 +1,7 @@
 # Session 2026-10-07 — UI-UPGRADE: theme pass (modernize the tkinter shell)
 
+> **Status: Completed**
+
 Brief: `documentation/briefs/UI-UPGRADE.md` (binding).
 
 ## Pre-change confirms (per AGENTS.md)

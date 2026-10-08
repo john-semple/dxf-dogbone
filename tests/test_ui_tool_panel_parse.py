@@ -72,6 +72,13 @@ class TestDiameterParse:
         assert panel._dia_text.get() == "0.25"
         assert panel.diameter_mm() == pytest.approx(6.35)
 
+    def test_panel_redo_button_starts_disabled_and_toggles(self, panel):
+        assert str(panel.redo_btn.cget("state")) == "disabled"
+        panel.set_redo_enabled(True)
+        assert str(panel.redo_btn.cget("state")) == "normal"
+        panel.set_redo_enabled(False)
+        assert str(panel.redo_btn.cget("state")) == "disabled"
+
     def test_panel_invalid_entry_returns_none(self, panel):
         for bad in ("", "abc", "-3", 'abc"', '1/0"', '"'):
             panel._dia_text.set(bad)

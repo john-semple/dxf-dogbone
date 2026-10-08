@@ -1,5 +1,7 @@
 # Interface Contracts
 
+> **Status: Mostly completed**
+
 Single source of truth for module boundaries and function signatures. Agents implement these; they do not redesign them. All signatures use Python type hints; all tolerances are explicit parameters with defaults from `geometry/tolerances.py`.
 
 **Ownership:** changes to this file require a new ADR entry in DECISIONS.md.
@@ -215,7 +217,16 @@ def trim_to_closest(primitives: list[Entity], p_world: Pt, eid: str,
                   # location) — candidates exclude the run's own member eids; extend-when-
                   # short, trim-when-past. Zero EXTERNAL attachments (build_adjacency minus
                   # run members, EPS_COINCIDE) => stray => propose deleting the run's
-                  # entity-level eids (deletions, no trims). Refusals (verbatim, pinned):
+                  # entity-level eids (deletions, no trims). ADR-028: when the click
+                  # sits in a collinear span with an intersection on both sides
+                  # (external attachment at a piece endpoint, or a finite crossing
+                  # through the piece interior), remove that span instead of
+                  # rotating onto a perpendicular foot. Members wholly inside are
+                  # a deletion carrying SPAN_DELETE. A member that runs past both
+                  # bounds is deleted whole; collinear geometry past either
+                  # intersection is kept. A member that runs past exactly one
+                  # bound is one on-axis Trim of the surviving stub. One open
+                  # side keeps the foot path above. Refusals (verbatim, pinned):
                   # "UNKNOWN_EDGE: <eid> is not resolvable in primitives" /
                   # "NO_TARGET: no supporting-geometry intersection found". Pure engine:
                   # imports geometry only.
@@ -233,12 +244,17 @@ class LoadResult:
     warnings: list[str]                       # census passthrough list, duplicate-merge count, fold-on-contour warnings
 
 def export(state: ModelState, header: dict, out_path: Path, fold_layer: str = "FOLD_LINES",
-           fold_color: int = FOLD_COLOR_CONST) -> ExportResult
+           fold_color: int = FOLD_COLOR_CONST, *, eps: float = EPS_COINCIDE,
+           remove_watermark: bool = True, original: ModelState | None = None) -> ExportResult
     # PURE: operates on a deep copy (ADR-004). Pipeline: fold extend/trim (idempotent:
     # skip if endpoint on arc within eps_coincide; extend to FIRST circle intersection,
-    # max 2× deletion-window reach else unchanged+warn) → move folds to FOLD_LINES layer
-    # → ezdxf.audit pre-check (must be clean, else export aborts with report) → save.
-    # ExportResult: warnings, audit_summary, deleted_entity_count
+    # max 2× deletion-window reach else unchanged+warn) → watermark filter (ADR-017:
+    # exact WATERMARK_TEXTS match on the copy only; default on) → move folds to
+    # FOLD_LINES layer → ezdxf.audit pre-check (must be clean, else export aborts
+    # with a human-readable report and writes neither the DXF nor the log) → save
+    # → write <out>.export_log.md. `original` is the load-time drawing, used only
+    # for the log's deletion list. ExportResult: warnings, audit_summary,
+    # deleted_entity_count (watermark notes removed by this call), written.
 ```
 
 ## 4. Verification API (`tools/verify_*.py`)
@@ -266,7 +282,8 @@ def run_corner_workflow_clicks(canvas, click_seq: list[tuple[float, float]]) -> 
 | Concern | Module | Note |
 |---|---|---|
 | hit-testing, EPS_PICK derivation, edge promotion | `rules/` | headless-testable; UI only converts screen→world |
-| snapshot/undo/revert, flag-decision persistence | `model/` | flags travel in snapshots (sticky per session; Revert-to-Original clears) |
+| snapshot/undo/redo/revert, flag-decision persistence | `model/` | flags travel in snapshots (sticky per session; Revert-to-Original clears). Redo (ADR-027) keeps the state undo leaves; a new push, revert, fold designation, or sticky flag decision clears it. The pending queue is not in the snapshot |
+| pending-corner undo | `ui/` | ADR-016(j) record, ADR-029 history: confirm depth, Apply All batch restore, newest-first removal. Revert keeps the queue and drops that history |
 | zoom transform (px↔world) | `ui/` | but EPS_PICK derivation (px→world formula) lives in `rules/filters.py` |
 
 Rule: `geometry/` + `rules/` + `model/` are tkinter-free and ezdxf-free; `dxf_io/` + `ui/` may import their respective libraries.

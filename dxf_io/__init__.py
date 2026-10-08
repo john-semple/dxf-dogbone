@@ -5,7 +5,7 @@ pass-through warnings — no folds are designated at load, M5 owns designation).
 M5a implements the export fold stage (CONTRACTS §3 pipeline: fold extend/trim
 → layer move → audit pre-check → save; ADR-004 purity via deep copy).
 """
-from dxf_io.export import FOLD_COLOR_CONST, ExportResult, export
+from dxf_io.export import FOLD_COLOR_CONST, WATERMARK_TEXTS, ExportResult, export
 from dxf_io.load import LoadRefused, LoadResult, load
 
 __all__ = [
@@ -15,4 +15,5 @@ __all__ = [
     "export",
     "ExportResult",
     "FOLD_COLOR_CONST",
+    "WATERMARK_TEXTS",
 ]

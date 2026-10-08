@@ -29,6 +29,14 @@ def test_theme_apply_runs_on_throwaway_root():
         style = apply(root)
         assert isinstance(style, ttk.Style)
         assert style.theme_use() == "clam"
+        assert style.lookup("FoldMode.TButton", "padding") == style.lookup(
+            "Accent.TButton", "padding")
+        assert style.lookup("TrimMode.TButton", "padding") == style.lookup(
+            "FoldMode.TButton", "padding")
+        assert style.lookup("FoldMode.TButton", "background") == style.lookup(
+            "TButton", "background")
+        assert style.lookup("TrimMode.TButton", "background") == style.lookup(
+            "TButton", "background")
     finally:
         root.destroy()
 

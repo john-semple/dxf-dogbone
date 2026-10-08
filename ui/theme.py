@@ -20,9 +20,18 @@ COLORS: dict[str, str] = {
     "bg": "#1e1f26",            # root / panel background
     "bg_sunken": "#17181e",     # status bar / readouts
     "bg_elevated": "#262733",   # cards, pill frames
+    "bar_bg": "#32343e",        # top strip, one step above the rail
+    "file_chip": "#3e4250",     # File control on the top strip
+    "file_chip_hover": "#484c58",
     # text
     "fg": "#e8e9ed",            # primary text / light geometry strokes
     "fg_muted": "#9a9ca8",      # secondary text
+    "canvas_empty": "#6e7280",  # empty-canvas prompt (quieter than fg_muted)
+    "empty_btn": "#3a3d46",     # empty-canvas open button (filled grey)
+    "empty_btn_hover": "#484c58",
+    "empty_btn_edge": "#4e5260",
+    "empty_btn_edge_hover": "#5c6070",
+    "empty_btn_fg": "#e8e9ed",
     # canvas + geometry
     "canvas_bg": "#17181e",     # viewer canvas background (dark)
     "geometry_fg": "#c8cdd9",   # part strokes on dark bg
@@ -46,6 +55,13 @@ COLORS: dict[str, str] = {
     "pill_btn_bg": "#a5d6a7",
     "pill_btn_active": "#81c784",
     "pill_btn_fg": "#1b5e20",
+    # chord card + confirm — muted greys, quieter than the overlay reds
+    "dock_bg": "#2c2e36",
+    "dock_btn": "#3a3d46",
+    "dock_btn_hover": "#484c58",
+    "dock_text": "#d4d6de",
+    "dock_muted": "#9a9ca6",
+    "dock_edge": "#454852",
     # chrome
     "separator": "#3a3b45",
     "menu_bg": "#1e1f26",
@@ -90,6 +106,13 @@ def apply(root: tk.Misc) -> ttk.Style:
     style.configure("TFrame", background=c["bg"])
     style.configure("Status.TFrame", background=c["bg_sunken"])
     style.configure("TLabel", background=c["bg"], foreground=c["fg"])
+    style.configure("TCheckbutton", background=c["bg"], foreground=c["fg"],
+                    indicatorcolor=c["bg_elevated"], focuscolor=c["bg"])
+    style.map("TCheckbutton",
+              background=[("active", c["bg"]), ("disabled", c["bg"])],
+              foreground=[("disabled", c["fg_muted"])],
+              indicatorcolor=[("selected", c["accent"]),
+                              ("pressed", c["menu_active_bg"])])
     style.configure("Status.TLabel", background=c["bg_sunken"],
                     foreground=c["fg_muted"], padding=(PAD_X, 4))
     style.configure("StatusBold.TLabel", background=c["bg_sunken"],
@@ -103,6 +126,10 @@ def apply(root: tk.Misc) -> ttk.Style:
               background=[("active", c["menu_active_bg"]),
                          ("disabled", c["bg_elevated"])],
               foreground=[("disabled", c["fg_muted"])])
+    # TButton colors. Vertical padding matches Accent.TButton so
+    # Designate Folds and Trim to Closest are the same height as Apply All.
+    style.configure("FoldMode.TButton", padding=(PAD_X, PAD_Y))
+    style.configure("TrimMode.TButton", padding=(PAD_X, PAD_Y))
     style.configure("Accent.TButton", background=c["accent"],
                     foreground=c["accent_fg"], relief="flat", borderwidth=0,
                     focuscolor=c["accent"], padding=(PAD_X, PAD_Y))
@@ -110,9 +137,44 @@ def apply(root: tk.Misc) -> ttk.Style:
               background=[("active", c["accent_active"]),
                          ("disabled", c["bg_elevated"])],
               foreground=[("disabled", c["fg_muted"])])
+    # Selected quick-size: accent fill at the same padding as TButton so
+    # the grid row does not grow when a size is active.
+    style.configure("Selected.TButton", background=c["accent"],
+                    foreground=c["accent_fg"], relief="flat", borderwidth=0,
+                    focuscolor=c["accent"], padding=(PAD_X, PAD_Y // 2))
+    style.map("Selected.TButton",
+              background=[("active", c["accent_active"]),
+                         ("disabled", c["bg_elevated"])],
+              foreground=[("disabled", c["fg_muted"])])
+    # Revert sits with Undo/Redo but stays text-weight: no filled chip.
+    style.configure("Quiet.TButton", background=c["bg"],
+                    foreground=c["fg_muted"], relief="flat", borderwidth=0,
+                    focuscolor=c["bg"], padding=(4, 2))
+    style.map("Quiet.TButton",
+              background=[("active", c["bg"]),
+                         ("disabled", c["bg"])],
+              foreground=[("active", c["fg"]),
+                         ("disabled", c["separator"])])
+    # Top strip is a shelf. The ✕ stays quiet on that shelf.
+    style.configure("TopBar.TFrame", background=c["bar_bg"],
+                    borderwidth=0, relief="flat")
+    style.configure("BarQuiet.TButton", background=c["bar_bg"],
+                    foreground=c["fg_muted"], relief="flat", borderwidth=0,
+                    focuscolor=c["bar_bg"], padding=(8, 2))
+    style.map("BarQuiet.TButton",
+              background=[("active", c["bar_bg"]),
+                         ("disabled", c["bar_bg"])],
+              foreground=[("active", c["fg"]),
+                         ("disabled", c["separator"])])
 
-    # separators
+    # separators + the sidebar scrollbar (dark trough, no light chrome)
     style.configure("TSeparator", background=c["separator"])
+    style.configure("Vertical.TScrollbar", background=c["bg_elevated"],
+                    troughcolor=c["bg_sunken"], bordercolor=c["bg"],
+                    arrowcolor=c["fg_muted"], lightcolor=c["bg_elevated"],
+                    darkcolor=c["bg_elevated"])
+    style.map("Vertical.TScrollbar",
+              background=[("active", c["menu_active_bg"])])
 
     # root + menu colors (tk-level widgets; tk allows these on Windows)
     root.configure(background=c["bg"])

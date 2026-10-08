@@ -153,6 +153,26 @@ def test_trim_fsm_confirm_refused_at_repropose_drops_pending():
     assert "NO_TARGET" in (fsm.inline or "")
 
 
+def test_trim_fsm_span_delete_preview_inline():
+    """A both-sides span deletion uses the span sentence, not the stray one."""
+    from rules.manual_edit import SPAN_DELETE_WARNING
+    span = EditResult(
+        ok=True, reason=None, deletions=["L1"], trims=[],
+        warnings=[SPAN_DELETE_WARNING])
+    ports = FakePorts(picked=_seg("promoted-L1", 0, 0, 10, 0),
+                      results={"promoted-L1": span})
+    fsm = TrimFSM(ports=ports)
+    fsm.enter()
+    fsm.click_world(Pt(5.0, 0.0))
+    assert fsm.pending is not None and fsm.pending.deletions == ["L1"]
+    assert fsm.inline == msg.TRIM_PREVIEW_SPAN_DELETE
+    assert fsm.inline != msg.TRIM_PREVIEW_DELETE
+    res = fsm.confirm()
+    assert res is not None and res.deletions == ["L1"]
+    assert msg.TRIM_SPAN_DELETE_APPLIED in fsm.status
+    assert msg.TRIM_DELETE_APPLIED not in fsm.status
+
+
 def test_trim_fsm_stray_delete_preview_inline():
     ports = FakePorts(picked=_seg("promoted-S1", 0, 0, 20, 0),
                       results={"promoted-S1": _ok_stray(("S1",))})

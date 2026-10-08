@@ -12,12 +12,12 @@ Three pieces:
   mutation (ADR-001).
 * ``ToolPanel`` — the left-side tkinter panel: tool-diameter entry +
   mm/inch toggle + quick-pick size buttons (user ruling 2026-10-07,
-  decision 7), pending-corners readout, Apply All / Undo /
+  decision 7), pending-corners readout, Apply All / Undo / Redo /
   Revert-to-Original.
 * ``ApplyAllWorkflowUI`` — the M4 seam over M3's ``WorkflowUI``
   (base class byte-identical): Confirm = ENQUEUE (SPEC 5: single
   Apply All) via the ``apply`` port override; ``radius`` reads the
-  panel; undo/revert drive the SnapshotStack; queued corners show
+  panel; undo/redo/revert drive the SnapshotStack; queued corners show
   dashed ghost overlays; radius edits re-place live.
 
 No geometry is computed here (ADR-006): construction stays in
@@ -31,6 +31,7 @@ from tkinter import ttk
 from geometry.entities import CornerResult, Pt
 from model.model import Model
 from model.snapshots import SnapshotStack
+from ui.collapsible import CollapsibleSection
 from ui.theme import COLORS as THEME, font as theme_font
 from ui.workflow import (
     GHOST_COLOR,
@@ -126,26 +127,35 @@ class ApplyQueue:
 
 
 class ToolPanel(ttk.Frame):
-    """Left-side panel: diameter entry, unit toggle, quick-pick buttons,
-    pending readout, Apply All / Undo / Revert. All actions delegate to
-    the callbacks the App passes in."""
+    """Diameter entry, unit toggle, quick-pick buttons, pending readout,
+    Apply All, and Undo / Redo / Revert. All actions delegate to the
+    callbacks the App passes in.
+
+    The tool widgets live in the collapsible ``dogbone`` section, parented
+    to ``master`` so it scrolls with the other sections. Undo, Redo, and
+    Revert live in ``commands``, parented to ``command_parent`` when the
+    shell passes one (the rail's pinned strip). This frame itself stays
+    unpacked.
+    """
 
     def __init__(self, master, on_apply_all=None, on_undo=None,
-                 on_revert=None, on_radius_change=None):
-        super().__init__(master, style="TFrame", padding=(10, 10))
+                 on_redo=None, on_revert=None, on_radius_change=None,
+                 command_parent=None):
+        super().__init__(master, style="TFrame")
         self._on_apply_all = on_apply_all
         self._on_undo = on_undo
+        self._on_redo = on_redo
         self._on_revert = on_revert
         self._on_radius_change = on_radius_change
 
         self._unit_in = tk.BooleanVar(value=False)  # False = mm
         self._dia_text = tk.StringVar(value="3.175")
         self._pending_var = tk.StringVar(value=msg.STATUS_QUEUE_EMPTY)
+        self._pending_n = 0
 
-        ttk.Label(self, text=msg.PANEL_TITLE,
-                  style="TLabel", font=theme_font(10, "bold")).pack(
-            anchor="w", pady=(0, 6))
-        row = ttk.Frame(self, style="TFrame")
+        self.dogbone = CollapsibleSection(master, msg.SECTION_DOGBONE)
+        body = self.dogbone.body
+        row = ttk.Frame(body, style="TFrame")
         row.pack(fill=tk.X)
         ttk.Label(row, text=msg.LABEL_DIAMETER,
                   style="TLabel").pack(side=tk.LEFT)
@@ -158,12 +168,12 @@ class ToolPanel(ttk.Frame):
         self.dia_entry.pack(side=tk.RIGHT, padx=(4, 0))
         self.dia_entry.bind("<KeyRelease>", self._entry_edited)
 
-        self.readout = ttk.Label(self, text="", style="TLabel")
+        self.readout = ttk.Label(body, text="", style="TLabel")
         self.readout.pack(anchor="w", pady=(4, 0))
 
         # quick-pick buttons, TWO columns (user ruling): English | Metric
-        grid = ttk.Frame(self, style="TFrame")
-        grid.pack(fill=tk.X, pady=(8, 0))
+        grid = ttk.Frame(body, style="TFrame")
+        grid.pack(fill=tk.X, pady=(6, 0))
         ttk.Label(grid, text="Quick sizes", style="TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
         self._quick_buttons: list[tuple[float, ttk.Button]] = []
@@ -181,23 +191,36 @@ class ToolPanel(ttk.Frame):
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
 
-        self.pending_label = ttk.Label(self, textvariable=self._pending_var,
-                                       style="TLabel")
-        self.pending_label.pack(anchor="w", pady=(10, 0))
+        self.pending_label = ttk.Label(body, textvariable=self._pending_var,
+                                       style="TLabel", wraplength=248,
+                                       justify="left")
+        self.pending_label.pack(anchor="w", pady=(8, 0))
 
-        self.apply_btn = ttk.Button(self, text=msg.BTN_APPLY_ALL,
+        self.apply_btn = ttk.Button(body, text=msg.BTN_APPLY_ALL,
                                     style="Accent.TButton",
                                     command=self._apply_all)
-        self.apply_btn.pack(fill=tk.X, pady=(10, 4))
-        self.undo_btn = ttk.Button(self, text=msg.BTN_UNDO,
+        self.apply_btn.pack(fill=tk.X, pady=(8, 2))
+
+        # Pinned above the sections. Undo/Redo are the real buttons;
+        # Revert is text-weight so a misclick is less likely.
+        cmd_master = master if command_parent is None else command_parent
+        self.commands = ttk.Frame(cmd_master, style="TFrame")
+        hist = ttk.Frame(self.commands, style="TFrame")
+        hist.pack(fill=tk.X)
+        self.undo_btn = ttk.Button(hist, text=msg.BTN_UNDO,
                                     command=self._undo)
-        self.undo_btn.pack(fill=tk.X, pady=2)
-        self.revert_btn = ttk.Button(self, text=msg.BTN_REVERT,
+        self.undo_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        self.redo_btn = ttk.Button(hist, text=msg.BTN_REDO,
+                                    command=self._redo)
+        self.redo_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        self.revert_btn = ttk.Button(self.commands, text=msg.BTN_REVERT,
+                                     style="Quiet.TButton",
                                      command=self._revert)
-        self.revert_btn.pack(fill=tk.X, pady=2)
+        self.revert_btn.pack(anchor="w", pady=(4, 0))
         # initial state: nothing loaded, nothing queued, nothing to undo
         self.apply_btn.config(state=tk.DISABLED)
         self.undo_btn.config(state=tk.DISABLED)
+        self.redo_btn.config(state=tk.DISABLED)
         self.revert_btn.config(state=tk.DISABLED)
         self._refresh_readout()
         self._highlight_quick()
@@ -264,32 +287,52 @@ class ToolPanel(ttk.Frame):
         dia = self.diameter_mm()
         if dia is None:
             self.readout.config(text="—", foreground=THEME["fg_muted"])
-            return
-        unit = msg.UNIT_IN if self._unit_in.get() else msg.UNIT_MM
-        self.readout.config(
-            text=msg.DIA_READOUT.format(dia=dia, unit=unit, r=dia / 2.0),
-            foreground=THEME["fg"])
+        else:
+            unit = msg.UNIT_IN if self._unit_in.get() else msg.UNIT_MM
+            self.readout.config(
+                text=msg.DIA_READOUT.format(dia=dia, unit=unit, r=dia / 2.0),
+                foreground=THEME["fg"])
+        self._sync_summary()
+
+    def _sync_summary(self) -> None:
+        """Header note so a minimized Dogbone section still shows the tool."""
+        dia = self.diameter_mm()
+        if dia is None:
+            text = "—"
+        else:
+            unit = msg.UNIT_IN if self._unit_in.get() else msg.UNIT_MM
+            text = f"Ø {dia:.4g} {unit}"
+        if self._pending_n:
+            text += f"  ·  {self._pending_n} queued"
+        self.dogbone.set_summary(text)
 
     def _highlight_quick(self) -> None:
         """Active size highlights (incl. the 1/8\" default at load)."""
         dia = self.diameter_mm()
         for qdia, btn in self._quick_buttons:
             if dia is not None and abs(qdia - dia) <= 1e-9:
-                btn.config(style="Accent.TButton")
+                btn.config(style="Selected.TButton")
             else:
                 btn.config(style="TButton")
 
     # ------------------------------------------------------ state slots
     def set_pending_count(self, n: int) -> None:
+        self._pending_n = n
         if n:
             self._pending_var.set(msg.STATUS_PENDING_COUNT.format(n=n))
         else:
             self._pending_var.set(msg.STATUS_QUEUE_EMPTY)
         self.apply_btn.config(state=tk.NORMAL if n else tk.DISABLED)
+        self._sync_summary()
 
     def set_undo_enabled(self, enabled: bool) -> None:
         """Stack-bottom disable (DoD: disabled, not crashed)."""
         self.undo_btn.config(
+            state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def set_redo_enabled(self, enabled: bool) -> None:
+        """Empty-redo disable (same rule as undo: disabled, not crashed)."""
+        self.redo_btn.config(
             state=tk.NORMAL if enabled else tk.DISABLED)
 
     def set_revert_enabled(self, enabled: bool) -> None:
@@ -304,6 +347,10 @@ class ToolPanel(ttk.Frame):
     def _undo(self) -> None:
         if self._on_undo is not None:
             self._on_undo()
+
+    def _redo(self) -> None:
+        if self._on_redo is not None:
+            self._on_redo()
 
     def _revert(self) -> None:
         if self._on_revert is not None:
@@ -327,10 +374,23 @@ class ApplyAllWorkflowUI(WorkflowUI):
         self.queue = ApplyQueue(model, stack)
         self.panel = panel
         self._last_valid_r = radius_mm
+        # Stack depth at each confirm that has not been applied.
+        # A suffix of the queue: Revert can leave older corners that
+        # Undo must not remove.
+        self._unapplied_depths: list[int] = []
+        # Apply All batches, newest last: (push gen, corners, depths).
+        # Undo of that snapshot puts the corners back; further Undos
+        # remove them newest-first. Redo applies the batch again.
+        self._batches: list[tuple] = []
+        self._batch_redo: list[tuple] = []
+        self._undo_gens: list[int] = []
+        self._redo_gens: list[int] = []
+        self._next_gen = 0
         super().__init__(viewer, model, root, on_status=on_status,
                          radius_mm=radius_mm, on_state=on_state)
         # load snapshot: the model was constructed from the loaded
         # state — record it now (ADR-001; seeds the undo stack).
+        self.bind_history_hooks(stack)
         stack.push_load()
         self._notify_queue()
 
@@ -345,7 +405,16 @@ class ApplyAllWorkflowUI(WorkflowUI):
             # All — mixed-tool parts apply in separate batches.
             from dataclasses import replace
             self.queue.enqueue(replace(pending, r=self.radius()))
+            # Depth after this confirm. A later trim or Apply All
+            # pushes, so Undo restores that drawing change first.
+            self._unapplied_depths.append(len(self.stack))
         self._notify_queue()
+
+    def decide_flag(self, flag, kind: str) -> str | None:
+        """A sticky flag decision mutates the model without its own
+        snapshot. That abandons the redo branch (ADR-027)."""
+        self.stack.discard_redo()
+        return super().decide_flag(flag, kind)
 
     def radius(self) -> float:
         """Panel field drives R; invalid entry falls back to the last
@@ -361,12 +430,14 @@ class ApplyAllWorkflowUI(WorkflowUI):
     def _notify_queue(self) -> None:
         if self.panel is not None:
             self.panel.set_pending_count(len(self.queue.queue))
-            self.panel.set_undo_enabled(self.stack.can_undo())
+            self.panel.set_undo_enabled(
+                self.stack.can_undo() or self._unapplied_ready())
+            self.panel.set_redo_enabled(self.stack.can_redo())
             self.panel.set_revert_enabled(
                 self.stack.load_snapshot is not None)
 
     def _restart_to_pick_edge1(self, toast: str) -> None:
-        """Decision 4: after Apply All / Undo / Revert the workflow
+        """Decision 4: after Apply All / Undo / Redo / Revert the workflow
         restarts CLEANLY at PICK_EDGE1 (no half-state)."""
         self.fsm._restart(toast)   # clears every pick field -> IDLE
         self.fsm.start()           # IDLE -> PICK_EDGE1
@@ -378,7 +449,15 @@ class ApplyAllWorkflowUI(WorkflowUI):
     def apply_all(self) -> tuple[int, list[str]]:
         """Drive the batch: snapshot -> re-place each pending live ->
         apply in click order; skips dropped with engine strings."""
+        saved_q = tuple(self.queue.queue)
+        saved_d = tuple(self._unapplied_depths)
+        top_before = self._undo_gens[-1] if self._undo_gens else None
         applied, skips = self.queue.apply_all()
+        # Applied and skipped corners are both gone from the queue.
+        self.clear_unapplied_undo()
+        top_after = self._undo_gens[-1] if self._undo_gens else None
+        if top_after is not None and top_after != top_before:
+            self._batches.append((top_after, saved_q, saved_d))
         if applied:
             self.viewer.set_model(self.model.state)
         toast = msg.APPLY_ALL_TOAST.format(
@@ -392,16 +471,144 @@ class ApplyAllWorkflowUI(WorkflowUI):
         self._restart_to_pick_edge1(toast)
         return applied, skips
 
+    def bind_history_hooks(self, stack: SnapshotStack) -> None:
+        """Point snapshot notifications at this workflow.
+
+        File retarget replaces the stack. The new one must call these
+        before ``push_load``, or Apply All history from the previous
+        file would still be live.
+        """
+        stack.on_push = self._on_stack_push
+        stack.on_undo = self._on_stack_undo
+        stack.on_redo = self._on_stack_redo
+        stack.on_load_seed = self._on_load_seed
+        stack.on_redo_abandoned = self._on_redo_abandoned
+        stack.on_revert = self._on_stack_revert
+
+    def _on_stack_push(self) -> None:
+        self._next_gen += 1
+        self._undo_gens.append(self._next_gen)
+        self._redo_gens.clear()
+        self._batch_redo.clear()
+
+    def _on_stack_undo(self) -> None:
+        if self._undo_gens:
+            self._redo_gens.append(self._undo_gens.pop())
+
+    def _on_stack_redo(self) -> None:
+        if self._redo_gens:
+            self._undo_gens.append(self._redo_gens.pop())
+
+    def _on_load_seed(self) -> None:
+        self._next_gen += 1
+        self._undo_gens = [self._next_gen]
+        self._redo_gens.clear()
+        self._batches.clear()
+        self._batch_redo.clear()
+        self._unapplied_depths.clear()
+
+    def _on_redo_abandoned(self) -> None:
+        self._redo_gens.clear()
+        self._batch_redo.clear()
+
+    def _on_stack_revert(self) -> None:
+        self._batches.clear()
+        self._batch_redo.clear()
+        self._undo_gens.clear()
+        self._redo_gens.clear()
+        self._unapplied_depths.clear()
+
+    @staticmethod
+    def _corner_key(pending: PendingCorner) -> tuple:
+        return (
+            pending.edge1_eid, pending.edge2_eid, pending.side,
+            pending.side_flip, pending.db_id,
+        )
+
+    def _drop_restored_batch(self, saved: tuple) -> None:
+        """Remove the applied corners from the front of the queue.
+
+        Redo puts those dogbones back on the drawing. Corners confirmed
+        after the undo stay queued.
+        """
+        n = 0
+        for pending, old in zip(self.queue.queue, saved):
+            if self._corner_key(pending) != self._corner_key(old):
+                break
+            n += 1
+        if n:
+            del self.queue.queue[:n]
+            del self._unapplied_depths[:n]
+
+    def clear_unapplied_undo(self) -> None:
+        """Forget confirm-undo depths. Does not change the pending queue.
+
+        Apply All calls this because the queue was consumed. Revert and
+        file retarget call it so a later stack length cannot match a
+        depth from before that boundary and remove a corner that must stay.
+        """
+        self._unapplied_depths.clear()
+
+    def _unapplied_ready(self) -> bool:
+        """True when the newest confirm is still the latest drawing step."""
+        return bool(
+            self._unapplied_depths
+            and self.queue.queue
+            and self._unapplied_depths[-1] == len(self.stack)
+        )
+
     def undo(self) -> bool:
-        """Undo = restore previous snapshot + redraw + clean restart.
-        Undo at stack bottom: disabled button (panel), False here —
-        never a crash."""
+        """Undo the newest unapplied confirm, or else the previous snapshot.
+
+        A confirm records the stack depth. Undo removes that one corner
+        only while the depth still matches, and does not touch the
+        snapshot stack (the load seed stays). A trim that pushed
+        afterward is undone first. Undo of an Apply All restores the
+        drawing, puts that batch back on the queue, and later Undos
+        remove those corners newest-first.
+        """
+        if (self._unapplied_depths
+                and self._unapplied_depths[-1] == len(self.stack)):
+            if self.queue.queue:
+                self.queue.queue.pop()
+                self._unapplied_depths.pop()
+                self._restart_to_pick_edge1(msg.UNDO_QUEUED)
+                return True
+            # Depth with nothing queued: drop the stale record.
+            self._unapplied_depths.clear()
         if not self.stack.can_undo():
             self._restart_to_pick_edge1(msg.UNDO_EMPTY)
             return False
+        top_gen = self._undo_gens[-1] if self._undo_gens else None
+        batch = None
+        if self._batches and self._batches[-1][0] == top_gen:
+            batch = self._batches.pop()
         self.stack.undo()
+        if batch is not None:
+            _gen, saved_q, saved_d = batch
+            self.queue.queue = list(saved_q)
+            self._unapplied_depths = list(saved_d)
+            self._batch_redo.append(batch)
         self.viewer.set_model(self.model.state)
-        self._restart_to_pick_edge1(msg.UNDO_TOAST)
+        toast = msg.UNDO_APPLIED if batch is not None else msg.UNDO_TOAST
+        self._restart_to_pick_edge1(toast)
+        return True
+
+    def redo(self) -> bool:
+        """Redo = restore the state undo just left + redraw + clean restart.
+        Empty redo stack: disabled button (panel), False here — never a crash."""
+        if not self.stack.can_redo():
+            self._restart_to_pick_edge1(msg.REDO_EMPTY)
+            return False
+        redone_gen = self._redo_gens[-1] if self._redo_gens else None
+        self.stack.redo()
+        if (self._batch_redo and redone_gen is not None
+                and self._batch_redo[-1][0] == redone_gen):
+            batch = self._batch_redo.pop()
+            self._batches.append(batch)
+            self._drop_restored_batch(batch[1])
+        self.viewer.set_model(self.model.state)
+        self._restart_to_pick_edge1(msg.REDO_TOAST)
         return True
 
     def revert_to_original(self) -> bool:
@@ -411,6 +618,8 @@ class ApplyAllWorkflowUI(WorkflowUI):
         if self.stack.load_snapshot is None:
             return False
         self.stack.revert()
+        # The queue stays (decision 5). Its corners are no longer undo steps.
+        self.clear_unapplied_undo()
         self.viewer.set_model(self.model.state)
         self._restart_to_pick_edge1(msg.REVERT_TOAST)
         return True

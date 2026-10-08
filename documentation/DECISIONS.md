@@ -1,5 +1,7 @@
 # Decision Log (ADR format)
 
+> **Status: In progress**
+
 Every entry: date / decision / why / alternatives considered. Agents must read this file before working. New sessions append entries; never delete.
 
 ---
@@ -442,3 +444,44 @@ ules/folds.py, dxf_io/export.py, geometry/ stay untouched (gap >2 loops -> STOP,
 **Alternatives:** Extending CornerResult (rejected: forces a fake Dogbone through apply_corner); separate EditHistory (rejected: snapshots already travel - duplication); UI-side math (rejected: ADR-006).
 
 **Consequence:** CONTRACTS.md gains the EditResult block + trim_to_closest + apply_edit normative signatures; ISSUES.md gains the M-TRIM row (this session writes it; single-writer); tests test_rules_manual_edit_*.py / test_model_apply_edit.py / test_ui_trim_fsm.py; verify_gui.py gains --trim (synthetic drive: trim, extend, stray-delete, NO_TARGET stay, undo, fold-designation scrub, binding isolation). M6 must map manual-edit residuals separately (manual trims are engine-invisible by design; ISSUE-012(e) residual class extended). ISSUE-020 registered (arc-subject deferred to V1.1).
+
+## ADR-027 — 2026-10-08 — Redo stack beside Undo (amends ADR-001)
+
+ADR-026 is left unused on purpose: the M-TRIM session reserved it for the M6 session that was in flight while this entry was written.
+
+**Decision:** Undo keeps the state it leaves on a redo stack of the same deep-copy snapshots (ADR-001). Redo swaps that state back and pushes the current state onto the undo stack. A new `SnapshotStack.push` (Apply All or trim confirm), `revert`, a fold designation, or a sticky flag decision clears the redo stack. The Redo button sits beside Undo and is disabled when the redo stack is empty (disabled, never a crash — the same rule as Undo at stack bottom).
+
+**Why:** The snapshot model already copies the whole document before each edit. Redo is retaining the copy undo used to discard. Users who undo one step past a good apply can return to it without redoing the click sequence.
+
+**Alternatives:** Leave redo out of V1 (ADR-001's original scope cut — rejected once the user asked for the button); command-pattern inverse ops (rejected: ADR-001's reason for snapshots still holds).
+
+**Consequence:** `SnapshotStack` gains `can_redo` / `redo` / `discard_redo`. CONTRACTS §5 ownership row names redo. Fold designation and flag decisions are not their own undo steps; they only clear redo so a later redo cannot overwrite that edit. Export stays pure and does not read the stack (ADR-004 unchanged). ISSUES.md was not edited — the M6 session owns that file's milestone row while this work ran beside it.
+
+## ADR-028 — 2026-10-08 — Trim removes the collinear span between intersections (amends ADR-025)
+
+**Decision:** `trim_to_closest` still deletes a run with zero external attachments, and still moves one endpoint along a perpendicular foot when the click has an intersection on only one side. When the click lies between an intersection on each side, that path is not used. An intersection is an external attachment at an endpoint of the collinear piece, or a finite crossing through the piece interior. Collinear neighbors with only an endpoint gap stay in the piece. The piece stops at the first intersection on each side.
+
+If every member of that span lies wholly inside it, the result is a deletion of those entity-level eids and the pinned warning `SPAN_DELETE`. If one segment continues past both intersections, that whole segment is deleted and collinear geometry past either intersection is kept. If a member continues past exactly one intersection, the result is one on-axis `Trim` of the surviving stub. The UI shows a span sentence for `SPAN_DELETE` and keeps the stray sentence for a stray deletion.
+
+**Why:** A line whose ends both meet other geometry was swung off its axis onto the perpendicular foot of an off-axis line. The line between those joints should come out, and the walk should not continue through a joint into the next collinear segment.
+
+**Alternatives:** Keep the foot and accept the rotation (rejected: the reported bug). Cut a window out of a segment that continues past both intersections (rejected: `EditResult` has deletions and one `Trim`, and `apply_edit` cannot split one entity). Shorten one end and drop the other overhang (rejected: the user asked to delete the whole segment and stop at both intersections).
+
+**Consequence:** CONTRACTS §2 `trim_to_closest` comment gains the span rule. ADR-025's body is unchanged; this entry amends it. `rules/manual_edit.py` pins `SPAN_DELETE_WARNING`. `ui/messages.py` gains the span preview sentence. ISSUES.md was not edited.
+
+## ADR-029 — 2026-10-08 — Undo of queued corners, then of Apply All (amends ADR-001 / ADR-016(j))
+
+**Decision:** The pending queue stays out of `ModelState`. Its undo history lives in the corner workflow.
+
+- Each confirm records the snapshot-stack depth. Undo removes that one corner, newest first, while the depth still matches, and does not pop a snapshot.
+- A later trim or other snapshot is undone first. The queued corner waits until the stack length matches the recorded depth.
+- Apply All remembers the queue it consumed, tied to the snapshot it pushed. Undo of that snapshot restores the pre-apply drawing and puts those corners back, including corners the batch skipped. Further Undos remove them newest-first. If every corner is skipped, no snapshot is pushed, the queue is dropped, and Undo does not bring it back.
+- Redo of that Apply All snapshot puts the dogbones back and removes the restored corners from the front of the queue. A corner confirmed after that undo stays queued. Redo does not restore a corner removed by the confirm-undo above.
+- Confirm does not clear the redo stack. ADR-027's clear list is unchanged: a new push, revert, a fold designation, or a sticky flag decision.
+- Revert-to-Original still keeps the pending queue and forgets the confirm depths and the Apply All batch memory. Opening another file or clearing the session clears the queue and that memory.
+
+**Why:** A corner confirmed and then undone stayed queued, so a later Apply All still cut it. One Undo of Apply All also removed every dogbone and left the list empty, so one corner of the batch could not be taken back on its own.
+
+**Alternatives:** Store the queue in `ModelState` (rejected: ADR-016(j); Revert's keep-queue rule would ride along inside the snapshot). Clear the whole queue on every Undo (rejected: a corner queued after an apply would vanish when that apply was undone). Split one Apply All into one snapshot per dogbone (rejected: the batch stays one drawing step; the corners come off the list after that step is undone).
+
+**Consequence:** SPEC §11.7 and CONTRACTS §5 name this. `ApplyQueue` and the contents of a `SnapshotStack` snapshot are unchanged. Tests live in `tests/test_ui_unapplied_undo.py`. The `verify_gui.py` apply-undo drive restores the batch, then undoes each corner, before it reaches the load snapshot. ISSUES.md was not edited.

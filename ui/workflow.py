@@ -24,6 +24,7 @@ live model (never applies a stale CornerResult).
 """
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -334,6 +335,15 @@ DELETE_COLOR = THEME["delete"]  # thick red for delete/trim preview (brief item 
 DELETE_WIDTH = 3
 FLAG_COLOR = THEME["flag"]     # flagged entities, orange outline
 FLAG_WIDTH = 2
+CHORD_FOCUS_WIDTH = 5          # the one chord-crosser the card is asking about
+# Flag card. Delete's center sits on the ghost-click pointer. Full
+# behavior: documentation/sessions/2026-10-08-CHORD-PROMPT.md.
+DOCK_MARGIN = 8
+DOCK_GAP = 12                  # px between the circle and the card
+DOCK_PAD = 10
+DOCK_RADIUS = 10
+DOCK_BTN_H = 26
+DOCK_BTN_GAP = 8
 
 
 class WorkflowUI:
@@ -347,6 +357,7 @@ class WorkflowUI:
     FLASH_TAG = "m3_flash"
     DELETE_TAG = "m3_delete"
     FLAG_TAG = "m3_flag"
+    CHORD_TAG = "m3_chord"   # thick outline of the chord-crosser under the card
     PILL_TAG = "m3_pill"
 
     def __init__(self, viewer: Viewer, model: Model, root: tk.Misc,
@@ -358,7 +369,18 @@ class WorkflowUI:
         self._on_status = on_status
         self._on_state = on_state  # App refreshes Confirm affordances via it
         self._radius_mm = radius_mm  # default tool dia 3.175 → R 1.5875
-        self._pill: tk.Frame | None = None
+        self._dock: tk.Canvas | None = None
+        self._hits: dict[str, tuple[float, float, float, float]] = {}
+        self._dock_mode = ""
+        self._dock_anchor: tuple[float, float] | None = None
+        self._dock_pinned: tuple[int, int] | None = None
+        self._button_at: tuple[float, float] | None = None
+        self._confirm_ready_at = 0.0
+        self._ask_eids: list[str] | None = None
+        self._hit_proc = None
+        self._hit_old = None
+        self._hit_hwnd: int | None = None
+        self._view_before_zoom: ViewTransform | None = None
         self.fsm = WorkflowFSM(ports=self)
         self._bind()
 
@@ -396,9 +418,10 @@ class WorkflowUI:
         )
 
     def decide_flag(self, flag: Flag, kind: str) -> str | None:
-        """First-occurrence prompt (ADR-009 sticky per session). The
-        harness overrides this; the shell pops a modal yes/no.
-        V1 shell: yes = delete, no = keep (trim stays engine-scripted)."""
+        """Yes/no for the headless harness (ADR-009 sticky per session).
+
+        The interactive card does not call this. A harness replaces it.
+        Yes = delete, no = keep (trim stays engine-scripted)."""
         from tkinter import messagebox  # late: headless tests never hit it
         text = msg.FLAG_PROMPT_TEXT.format(kind=kind, eid=flag.eid,
                                            reason=flag.reason)
@@ -418,6 +441,7 @@ class WorkflowUI:
     def _bind(self) -> None:
         c = self.viewer.canvas
         c.bind("<ButtonPress-1>", self._on_left, add=True)
+        c.bind("<Motion>", self._on_canvas_motion, add=True)
         c.bind("<Button-3>", self._on_right, add=True)
         c.bind("<Escape>", self._on_esc, add=True)
         c.bind("<Return>", self._on_enter, add=True)
@@ -433,9 +457,14 @@ class WorkflowUI:
 
     # ------------------------------------------------------------- events
     def _on_left(self, ev) -> None:
+        if self._relay_dock_click(ev):
+            return
         if self.fsm.state == WorkflowState.GHOSTS_VISIBLE:
             hit = self._ghost_at(ev.x, ev.y)
             if hit is not None:
+                self._dock_anchor = (float(ev.x), float(ev.y))
+                self._dock_pinned = None
+                self._button_at = None
                 self.fsm.pick_ghost(hit.side, hit.side_flip)
                 self._sync_view()
                 return
@@ -444,11 +473,25 @@ class WorkflowUI:
         self._sync_view()
 
     def _on_right(self, _ev) -> None:
-        self.fsm.right_click()
-        self._sync_view()
+        self._abort_pick()
 
-    def _on_esc(self, _ev) -> None:
+    def _on_esc(self, _ev) -> str:
+        self._abort_pick()
+        return "break"
+
+    def _abort_pick(self) -> None:
+        """Esc / right-click. A preview close-up returns to the view from
+        before that auto-zoom."""
+        restore = (
+            self.fsm.state == WorkflowState.SIDE_PICKED
+            and self._view_before_zoom is not None
+        )
+        saved = self._view_before_zoom
+        self._view_before_zoom = None
         self.fsm.esc()
+        if restore and saved is not None:
+            self.viewer.transform = saved
+            self.viewer.redraw()
         self._sync_view()
 
     def confirm_click(self) -> CornerResult | None:
@@ -456,7 +499,10 @@ class WorkflowUI:
         res = self.fsm.confirm()
         if res is not None:
             # apply() triggered set_model → full redraw; overlays already
-            # wiped by the viewer — nothing stale left to clear
+            # wiped by the viewer — nothing stale left to clear.
+            # The close-up is over; the next preview must remember the
+            # view the user is on then, not this one.
+            self._view_before_zoom = None
             self._destroy_pill()
             self._on_state_notify()
         else:
@@ -510,49 +556,514 @@ class WorkflowUI:
     def _clear_overlays(self) -> None:
         c = self.viewer.canvas
         for tag in (self.FLASH_TAG, self.GHOST_TAG, self.DELETE_TAG,
-                    self.FLAG_TAG):
+                    self.FLAG_TAG, self.CHORD_TAG):
             c.delete(tag)
         self._destroy_pill()
 
     def _destroy_pill(self) -> None:
-        if self._pill is not None:
+        self._remove_click_through()
+        if self._dock is not None:
             try:
-                self._pill.destroy()
+                self._dock.destroy()
             except tk.TclError:
                 pass
-            self._pill = None
+        self._dock = None
+        self._hits = {}
+        self._dock_mode = ""
 
-    def _show_confirm_pill(self) -> None:
-        """Floating Confirm button near the corner (user round-3 request:
-        the bottom bar button is out of the way after auto-zoom; round-7:
-        made MUCH bigger). A minimal canvas-window overlay, drawn at
-        preview entry and destroyed on any state change — the UI-upgrade
-        pass can restyle or replace it; the seam is this one method."""
-        self._destroy_pill()
+    def _canvas_px(self) -> tuple[int, int]:
+        c = self.viewer.canvas
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w <= 1:
+            w = int(c.cget("width"))
+        if h <= 1:
+            h = int(c.cget("height"))
+        return max(1, w), max(1, h)
+
+    def _clamp_dock(self, x: float, y: float, width: int, height: int) -> tuple[int, int]:
+        w, h = self._canvas_px()
+        x = int(min(max(round(x), DOCK_MARGIN), max(w - width - DOCK_MARGIN, DOCK_MARGIN)))
+        y = int(min(max(round(y), DOCK_MARGIN), max(h - height - DOCK_MARGIN, DOCK_MARGIN)))
+        return x, y
+
+    @staticmethod
+    def _covers_circle(x: float, y: float, width: int, height: int,
+                       cx: float, cy: float, r_px: float) -> bool:
+        import math
+        nearest_x = min(max(cx, x), x + width)
+        nearest_y = min(max(cy, y), y + height)
+        return math.hypot(cx - nearest_x, cy - nearest_y) < r_px + 2
+
+    def _dock_origin(self, width: int, height: int,
+                     hotspot: tuple[float, float] = (0.0, 0.0)) -> tuple[int, int]:
+        """Top-left of the card.
+
+        ``hotspot`` is the point inside the card (Delete, or Confirm) that
+        should sit on the pointer. If that covers the relief circle, the
+        card steps aside. With no pointer (the harness), the card sits just
+        to the right of the circle and ``hotspot`` is ignored.
+        """
+        import math
+        w, h = self._canvas_px()
+        res = self.fsm.preview
+        db = res.dogbone if res is not None else None
+        if db is None:
+            return DOCK_MARGIN, DOCK_MARGIN
+        cx, cy = self.transform.to_screen(db.center)
+        r_px = db.r * self.transform.scale
+        if self._dock_anchor is None:
+            x = cx + r_px + DOCK_GAP
+            y = cy - height / 2
+            if x + width > w - DOCK_MARGIN:
+                x = cx - r_px - DOCK_GAP - width
+            return self._clamp_dock(x, y, width, height)
+        ax, ay = self._dock_anchor
+        hx, hy = hotspot
+        pref = self._clamp_dock(ax - hx, ay - hy, width, height)
+        if not self._covers_circle(*pref, width, height, cx, cy, r_px):
+            return pref
+        candidates = (
+            (cx + r_px + DOCK_GAP, ay - hy),
+            (cx - r_px - DOCK_GAP - width, ay - hy),
+            (ax - hx, cy + r_px + DOCK_GAP),
+            (ax - hx, cy - r_px - DOCK_GAP - height),
+        )
+        best: tuple[int, int] | None = None
+        best_d = 0.0
+        for raw_x, raw_y in candidates:
+            pos = self._clamp_dock(raw_x, raw_y, width, height)
+            if self._covers_circle(*pos, width, height, cx, cy, r_px):
+                continue
+            d = math.hypot((pos[0] + hx) - ax, (pos[1] + hy) - ay)
+            if best is None or d < best_d:
+                best, best_d = pos, d
+        return best if best is not None else pref
+
+    def _ensure_dock(self) -> None:
+        """One canvas for the chord card and for Confirm.
+
+        Placed on the viewer canvas, not inserted as a canvas item: pan
+        moves every canvas item, and a full redraw deletes them. The widget
+        background matches the drawing so the square corners outside the
+        rounded shape disappear.
+        """
+        if self._dock is not None:
+            return
+        dock = tk.Canvas(
+            self.viewer.canvas, highlightthickness=0, bd=0,
+            bg=THEME["canvas_bg"], cursor="hand2")
+        dock.bind("<Button-1>", self._on_dock_click)
+        dock.bind("<Motion>", self._on_dock_motion)
+        dock.bind("<Leave>", self._on_dock_leave)
+        self._dock = dock
+
+    def _place_dock(self, width: int, height: int,
+                    hotspot: tuple[float, float]) -> None:
+        """Put ``hotspot`` (widget coords) on the pointer and pin that spot.
+
+        Confirm reuses the pin, so its center lands where Delete was.
+        """
+        assert self._dock is not None
+        if self._dock_anchor is None:
+            if self._dock_pinned is None:
+                self._dock_pinned = self._dock_origin(width, height)
+            x, y = self._clamp_dock(*self._dock_pinned, width, height)
+        else:
+            if self._button_at is None:
+                top = self._dock_origin(width, height, hotspot)
+                self._dock_pinned = top
+                self._button_at = (top[0] + hotspot[0], top[1] + hotspot[1])
+            x, y = self._clamp_dock(
+                self._button_at[0] - hotspot[0],
+                self._button_at[1] - hotspot[1],
+                width, height)
+        if self._same_place(x, y, width, height):
+            return
+        self._dock.configure(width=width, height=height)
+        self._dock.place(x=x, y=y, width=width, height=height)
+        self._dock.update_idletasks()
+        self._install_click_through()
+
+    def _dock_font(self):
+        import tkinter.font as tkfont
+        assert self._dock is not None
+        return tkfont.Font(root=self._dock, font=theme_font(9))
+
+    @staticmethod
+    def _rounded_points(x1: float, y1: float, x2: float, y2: float,
+                        r: float, steps: int = 8) -> list[float]:
+        """Corner samples in canvas space (y grows downward)."""
+        import math
+        r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
+        pts: list[float] = []
+        corners = (
+            (x2 - r, y1 + r, 270, 360),
+            (x2 - r, y2 - r, 0, 90),
+            (x1 + r, y2 - r, 90, 180),
+            (x1 + r, y1 + r, 180, 270),
+        )
+        for cx, cy, a0, a1 in corners:
+            for i in range(steps + 1):
+                a = math.radians(a0 + (a1 - a0) * i / steps)
+                pts.append(cx + r * math.cos(a))
+                pts.append(cy + r * math.sin(a))
+        return pts
+
+    def _round_rect(self, x1: float, y1: float, x2: float, y2: float,
+                    r: float, **kwargs) -> int:
+        assert self._dock is not None
+        return self._dock.create_polygon(
+            self._rounded_points(x1, y1, x2, y2, r),
+            smooth=False, **kwargs)
+
+    def _hit_at(self, x: float, y: float) -> str | None:
+        for name, (x1, y1, x2, y2) in self._hits.items():
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return name
+        return None
+
+    def _same_place(self, x: int, y: int, width: int, height: int) -> bool:
+        dock = self._dock
+        if dock is None:
+            return False
+        try:
+            info = dock.place_info()
+        except tk.TclError:
+            return False
+        if not info:
+            return False
+        return (int(float(info["x"])) == int(x)
+                and int(float(info["y"])) == int(y)
+                and int(float(info["width"])) == int(width)
+                and int(float(info["height"])) == int(height))
+
+    def _install_click_through(self) -> None:
+        """Send clicks to the canvas, which already has correct coordinates.
+
+        A card window placed under the pointer does not receive a click
+        until the mouse moves. Returning HTTRANSPARENT makes Windows
+        deliver that click to the canvas instead.
+        """
+        dock = self._dock
+        if dock is None or self._hit_proc is not None or sys.platform != "win32":
+            return
+        try:
+            hwnd = int(dock.winfo_id())
+        except (tk.TclError, ValueError):
+            return
+        if not hwnd:
+            return
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        LRESULT = ctypes.c_ssize_t
+        user32.GetWindowLongPtrW.restype = ctypes.c_void_p
+        user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+        user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+        user32.CallWindowProcW.restype = LRESULT
+        user32.CallWindowProcW.argtypes = [
+            ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+        ]
+        old = user32.GetWindowLongPtrW(hwnd, -4)
+        if not old:
+            return
+
+        @ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        def _proc(h, msg, wparam, lparam):
+            if msg == 0x0084:  # WM_NCHITTEST
+                return -1      # HTTRANSPARENT
+            return user32.CallWindowProcW(old, h, msg, wparam, lparam)
+
+        user32.SetWindowLongPtrW(hwnd, -4, ctypes.cast(_proc, ctypes.c_void_p))
+        self._hit_proc = _proc
+        self._hit_old = old
+        self._hit_hwnd = hwnd
+
+    def _remove_click_through(self) -> None:
+        if self._hit_proc is None or self._hit_hwnd is None or self._hit_old is None:
+            self._hit_proc = None
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+            user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+            user32.SetWindowLongPtrW(self._hit_hwnd, -4, self._hit_old)
+        except (OSError, AttributeError):
+            pass
+        self._hit_proc = None
+        self._hit_old = None
+        self._hit_hwnd = None
+
+    def _local_on_dock(self, ev) -> tuple[float, float] | None:
+        """Dock-local point from the click's screen position.
+
+        Tk's event x/y stay stale until the mouse moves after the card
+        is placed. The screen position does not.
+        """
+        x_root = getattr(ev, "x_root", None)
+        y_root = getattr(ev, "y_root", None)
+        dock = self._dock
+        if x_root is None or y_root is None or dock is None:
+            return None
+        try:
+            lx = x_root - dock.winfo_rootx()
+            ly = y_root - dock.winfo_rooty()
+            w = int(dock.winfo_width())
+            h = int(dock.winfo_height())
+        except tk.TclError:
+            return None
+        if 0 <= lx <= w and 0 <= ly <= h:
+            return (lx, ly)
+        return None
+
+    def _local_from_canvas(self, ev) -> tuple[float, float] | None:
+        dock = self._dock
+        if dock is None:
+            return None
+        try:
+            info = dock.place_info()
+        except tk.TclError:
+            return None
+        if not info:
+            return None
+        dx = float(info["x"])
+        dy = float(info["y"])
+        dw = float(info["width"])
+        dh = float(info["height"])
+        if dx <= ev.x <= dx + dw and dy <= ev.y <= dy + dh:
+            return (ev.x - dx, ev.y - dy)
+        return None
+
+    def _relay_dock_click(self, ev) -> bool:
+        """A canvas click whose point lies on the card."""
+        if self._dock is None or not self._hits:
+            return False
+        local = self._local_on_dock(ev)
+        if local is None:
+            local = self._local_from_canvas(ev)
+        if local is None:
+            return False
+        self.viewer._pan_from = None
+        self._activate(self._hit_at(*local))
+        return True
+
+    def _on_dock_click(self, ev) -> None:
+        local = self._local_on_dock(ev)
+        if local is None:
+            local = (ev.x, ev.y)
+        self._activate(self._hit_at(*local))
+
+    def _activate(self, name: str | None) -> None:
+        if name == "delete":
+            self._choose_chord("delete")
+        elif name == "keep":
+            self._choose_chord("keep")
+        elif name == "confirm":
+            self._on_dock_confirm()
+
+    def _on_canvas_motion(self, ev) -> None:
+        """Hover for the card. Clicks pass through, so motion does too."""
+        local = self._local_from_canvas(ev) if self._dock is not None else None
+        if local is None:
+            self._on_dock_leave()
+            try:
+                if self.viewer.canvas.cget("cursor") == "hand2":
+                    self.viewer.canvas.configure(cursor="")
+            except tk.TclError:
+                pass
+            return
+        try:
+            self.viewer.canvas.configure(cursor="hand2")
+        except tk.TclError:
+            pass
+        self._on_dock_motion(type("_Ev", (), {"x": local[0], "y": local[1]})())
+
+    def _pointer_on_dock(self) -> tuple[float, float] | None:
+        """Dock-local pointer, or None when the card is not on screen."""
+        dock = self._dock
+        if dock is None:
+            return None
+        try:
+            if not dock.winfo_viewable():
+                return None
+            return (
+                float(dock.winfo_pointerx() - dock.winfo_rootx()),
+                float(dock.winfo_pointery() - dock.winfo_rooty()),
+            )
+        except tk.TclError:
+            return None
+
+    def _hover_under_pointer(self) -> None:
+        """Paint the lighter button without waiting for a motion event.
+
+        The card is placed under the pointer that picked the ghost. That
+        pointer has not moved, so ``<Motion>`` has not run yet.
+        """
+        local = self._pointer_on_dock()
+        if local is None:
+            return
+        self._on_dock_motion(type("_Ev", (), {"x": local[0], "y": local[1]})())
+
+    def _on_dock_motion(self, ev) -> None:
+        if self._dock is None:
+            return
+        name = self._hit_at(ev.x, ev.y)
+        for key in self._hits:
+            fill = THEME["dock_btn_hover"] if key == name else THEME["dock_btn"]
+            self._dock.itemconfig(key, fill=fill)
+
+    def _on_dock_leave(self, _ev=None) -> None:
+        if self._dock is None:
+            return
+        for key in self._hits:
+            self._dock.itemconfig(key, fill=THEME["dock_btn"])
+
+    def _show_flag_contents(self, flag: Flag) -> None:
+        assert self._dock is not None
+        kind = msg.CHORD_CARD_KIND.get(self._kind_of(flag.eid), "entity")
+        template = msg.FLAG_CARD_BODY.get(flag.reason, "This {kind} needs a decision.")
+        line = template.format(kind=kind)
+        n, m = self._ask_progress(flag.eid)
+        count = msg.FLAG_CARD_COUNT.format(n=n, m=m)
+        font = self._dock_font()
+        line_h = font.metrics("linespace") + 2
+        count_w = font.measure(count)
+        text_w = font.measure(line) + 12 + count_w
+        min_btn = max(font.measure(msg.CHORD_CARD_DELETE),
+                      font.measure(msg.CHORD_CARD_KEEP)) + 22
+        inner = max(text_w, min_btn * 2 + DOCK_BTN_GAP)
+        btn_w = (inner - DOCK_BTN_GAP) / 2
+        width = int(DOCK_PAD * 2 + inner)
+        text_top = DOCK_PAD
+        btn_top = text_top + line_h + 8
+        height = int(btn_top + DOCK_BTN_H + DOCK_PAD)
+        delete_center = (DOCK_PAD + btn_w / 2, btn_top + DOCK_BTN_H / 2)
+        self._place_dock(width, height, delete_center)
+        self._dock.delete("all")
+        self._round_rect(
+            1, 1, width - 2, height - 2, DOCK_RADIUS,
+            fill=THEME["dock_bg"], outline=THEME["dock_edge"], width=1,
+            tags=("card",))
+        self._dock.create_text(
+            DOCK_PAD, text_top, text=line, anchor="nw",
+            fill=THEME["dock_text"], font=theme_font(9), tags=("body",))
+        self._dock.create_text(
+            width - DOCK_PAD, text_top, text=count, anchor="ne",
+            fill=THEME["dock_muted"], font=theme_font(9), tags=("count",))
+        labels = (("delete", msg.CHORD_CARD_DELETE, DOCK_PAD),
+                  ("keep", msg.CHORD_CARD_KEEP, DOCK_PAD + btn_w + DOCK_BTN_GAP))
+        self._hits = {}
+        for name, label, bx in labels:
+            x2 = bx + btn_w
+            y2 = btn_top + DOCK_BTN_H
+            self._round_rect(
+                bx, btn_top, x2, y2, DOCK_BTN_H / 2,
+                fill=THEME["dock_btn"], outline="", tags=(name,))
+            self._dock.create_text(
+                (bx + x2) / 2, (btn_top + y2) / 2, text=label,
+                fill=THEME["dock_text"], font=theme_font(9),
+                tags=(f"{name}-label",))
+            self._hits[name] = (bx, btn_top, x2, y2)
+        self._dock_mode = "flag"
+        self._hover_under_pointer()
+
+    def _show_confirm_contents(self) -> None:
+        """A single rounded Confirm button. No message line above it."""
+        assert self._dock is not None
+        font = self._dock_font()
+        width = int(font.measure(msg.BTN_CONFIRM) + 36)
+        height = DOCK_BTN_H + 4
+        self._place_dock(width, height, (width / 2, height / 2))
+        self._dock.delete("all")
+        self._round_rect(
+            1, 1, width - 2, height - 2, height / 2,
+            fill=THEME["dock_btn"], outline=THEME["dock_edge"], width=1,
+            tags=("confirm",))
+        self._dock.create_text(
+            width / 2, height / 2, text=msg.BTN_CONFIRM,
+            fill=THEME["dock_text"], font=theme_font(9),
+            tags=("confirm-label",))
+        self._hits = {"confirm": (0, 0, width, height)}
+        self._dock_mode = "confirm"
+        self._hover_under_pointer()
+
+    def _present_dock(self) -> None:
+        """Show the flag card, or a Confirm button alone beside the circle."""
         res = self.fsm.preview
         if res is None or res.dogbone is None:
             return
-        t = self.transform
-        # anchor: below-right of the dogbone circle, clamped into view
-        cx, cy = t.to_screen(res.dogbone.center)
-        r_px = res.dogbone.r * t.scale
-        w = max(1, self.viewer.canvas.winfo_width())
-        h = max(1, self.viewer.canvas.winfo_height())
-        x = min(max(cx + r_px + 12, 8), max(w - 220, 8))
-        y = min(max(cy + r_px + 8, 8), max(h - 90, 8))
-        pill = tk.Frame(self.viewer.canvas, bd=2, relief=tk.RAISED,
-                        bg=THEME["pill_bg"], highlightthickness=2,
-                        highlightbackground=THEME["pill_btn_active"],
-                        highlightcolor=THEME["pill_btn_active"])
-        tk.Button(pill, text="CONFIRM\nCORNER", command=self.confirm_click,
-                  bg=THEME["pill_btn_bg"], activebackground=THEME["pill_btn_active"],
-                  fg=THEME["pill_btn_fg"],
-                  font=theme_font(16, "bold"), bd=0,
-                  width=12, height=2, cursor="hand2").pack(
-            padx=6, pady=6)
-        self.viewer.canvas.create_window(x, y, window=pill, anchor="nw",
-                                         tags=(self.PILL_TAG,))
-        self._pill = pill
+        self._ensure_dock()
+        flag = self._pending_flag()
+        if flag is not None:
+            self._show_flag_contents(flag)
+        else:
+            self._confirm_ready_at = 0.0
+            self._show_confirm_contents()
+
+    def _on_dock_confirm(self) -> None:
+        """Confirm from the card. A click counts as soon as the button is up."""
+        self.confirm_click()
+
+    def _choose_chord(self, decision: str) -> None:
+        """Record one flag answer and update the dock in place.
+
+        Does not rebuild the frame or call ``_sync_view``: destroying the
+        button between the two halves of a double-click would drop the
+        second click onto the canvas.
+        """
+        flag = self._pending_flag()
+        if flag is None or self._dock is None:
+            return
+        self.model.state.flag_decisions[flag.eid] = decision
+        self.fsm.notify_flag_decision()
+        if self.fsm.state != WorkflowState.SIDE_PICKED or self._dock is None:
+            self._sync_view()
+            return
+        self._paint_side_picked()
+        nxt = self._pending_flag()
+        if nxt is not None:
+            self._show_flag_contents(nxt)
+        else:
+            self._confirm_ready_at = 0.0
+            self._show_confirm_contents()
+        self._on_state_notify()
+
+    def _ask_progress(self, eid: str) -> tuple[int, int]:
+        """1-based place of this question among the ones asked this preview."""
+        if self._ask_eids is None:
+            res = self.fsm.preview
+            flags = [] if res is None else [f for f in res.flags if f.decision is None]
+            chords = [f.eid for f in flags if f.reason == "CHORD_CROSSER"]
+            rest = [f.eid for f in flags if f.reason != "CHORD_CROSSER"]
+            self._ask_eids = chords + rest
+        eids = self._ask_eids
+        if eid in eids:
+            return eids.index(eid) + 1, len(eids)
+        return 1, max(len(eids), 1)
+
+    def _pending_flag(self) -> Flag | None:
+        """Next unanswered flag. Chord-crossers come before the others."""
+        res = self.fsm.preview
+        if res is None:
+            return None
+        pending = [f for f in res.flags if f.decision is None]
+        for f in pending:
+            if f.reason == "CHORD_CROSSER":
+                return f
+        return pending[0] if pending else None
+
+    def _pending_chord(self) -> Flag | None:
+        res = self.fsm.preview
+        if res is None:
+            return None
+        for f in res.flags:
+            if f.reason == "CHORD_CROSSER" and f.decision is None:
+                return f
+        return None
 
     def _flash_promoted(self, seg: Seg,
                         color: str = HIGHLIGHT_COLOR) -> None:
@@ -656,8 +1167,9 @@ class WorkflowUI:
         if res is None or res.dogbone is None:
             return
         db = res.dogbone
-        w = max(1, self.viewer.canvas.winfo_width())
-        h = max(1, self.viewer.canvas.winfo_height())
+        if self._view_before_zoom is None:
+            self._view_before_zoom = self.viewer.transform
+        w, h = self._canvas_px()
         span = max(8.0 * db.r, 1e-3)
         scale = min(w, h) * 0.8 / span
         scale = min(MAX_SCALE, max(MIN_SCALE, scale))
@@ -670,6 +1182,11 @@ class WorkflowUI:
 
     # ---------------------------------------------------------------- sync
     def _sync_view(self) -> None:
+        if self.fsm.state != WorkflowState.SIDE_PICKED:
+            self._dock_anchor = None
+            self._dock_pinned = None
+            self._button_at = None
+            self._ask_eids = None
         self._clear_overlays()
         st = self.fsm.state
         # persistent promoted-edge highlight (round-6): shows the most
@@ -688,15 +1205,10 @@ class WorkflowUI:
             if self.fsm.ghosts:
                 self._draw_ghosts()
         if st == WorkflowState.SIDE_PICKED and self.fsm.preview is not None:
-            self._prompt_pending_flags()
+            # Zoom and draw before the card so the corner is on screen.
             self._auto_zoom()  # redraws the canvas — draw overlays after
-            self._draw_preview()
-            # highlight AFTER the auto-zoom redraw (round-6: the redraw
-            # wiped overlays drawn before it; ghosts/preview re-drawn above);
-            # round-7: back to cyan once the preview lands
-            if self.fsm.edge2_seg is not None:
-                self._flash_promoted(self.fsm.edge2_seg, HIGHLIGHT_COLOR)
-            self._show_confirm_pill()
+            self._paint_side_picked()
+            self._present_dock()
         if self._on_state is not None:
             self._on_state()  # App refreshes the bottom Confirm button
         if self._on_status is not None:
@@ -705,10 +1217,38 @@ class WorkflowUI:
                 text = f"{text}    {self.fsm.inline}"
             self._on_status(text)
 
+    def _paint_side_picked(self) -> None:
+        """Deletion preview, promoted-edge flash, and the thick chord mark.
+
+        Does not touch the dock frame. ``viewer.redraw`` wipes canvas items,
+        so this is only safe when the geometry underneath is already drawn.
+        """
+        c = self.viewer.canvas
+        for tag in (self.FLASH_TAG, self.GHOST_TAG, self.DELETE_TAG,
+                    self.FLAG_TAG, self.CHORD_TAG):
+            c.delete(tag)
+        self._draw_preview()
+        if self.fsm.edge2_seg is not None:
+            self._flash_promoted(self.fsm.edge2_seg, HIGHLIGHT_COLOR)
+        self._highlight_pending_chord()
+
+    def _highlight_pending_chord(self) -> None:
+        flag = self._pending_flag()
+        if flag is None:
+            return
+        e = self.model.get(flag.eid)
+        if e is None:
+            return
+        self._outline_entity(e, FLAG_COLOR, CHORD_FOCUS_WIDTH, self.CHORD_TAG)
+
     def _prompt_pending_flags(self) -> None:
         """First occurrence → prompt yes/no; decision persisted via
         model.flag_decisions[eid] (sticky; recompute honors existing
-        decisions — no re-prompting; ADR-009)."""
+        decisions — no re-prompting; ADR-009).
+
+        Headless harness entry. The interactive preview uses the side card
+        for every pending flag and does not call this.
+        """
         res = self.fsm.preview
         if res is None:
             return

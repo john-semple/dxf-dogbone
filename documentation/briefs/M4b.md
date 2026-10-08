@@ -1,7 +1,8 @@
 # Brief — M4b: Apply-to-Similar (dot flow)
 
-**Status: planned 2026-10-07 (ADR-019 + ADR-020 loop-1 + ADR-021 loop-2 + ADR-023
-loop-3 technical pins; supersedes all earlier drafts of this brief).**
+> **Status: Not started**
+
+Planned 2026-10-07 (ADR-019 + ADR-020 loop-1 + ADR-021 loop-2 + ADR-023 loop-3 technical pins; supersedes all earlier drafts of this brief).
 
 **Registers:** ISSUE-018 (apply-to-similar, re-scoped to the dot flow).
 **Feature B (guided tour) is NOT in this sprint** — registered as M4c per

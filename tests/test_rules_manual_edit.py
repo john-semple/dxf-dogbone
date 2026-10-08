@@ -22,6 +22,7 @@ from geometry.entities import Arc, Circ, EditResult, PointEnt, Pt, Seg, TextEnt
 from rules.manual_edit import (
     REFUSAL_NO_TARGET,
     REFUSAL_UNKNOWN,
+    SPAN_DELETE_WARNING,
     trim_to_closest,
 )
 
@@ -327,6 +328,82 @@ def test_manual_edit_no_target_refusal_verbatim():
     assert not res.ok
     assert res.reason == REFUSAL_NO_TARGET
     assert res.reason == "NO_TARGET: no supporting-geometry intersection found"
+
+
+# -- both-sides span (ADR-028) ------------------------------------------------
+
+def test_manual_edit_both_ends_attached_deletes_span_not_rotates():
+    """Walls at both ends, plus an off-axis line whose perpendicular foot
+    would rotate the segment. The span between the walls is deleted."""
+    l1 = _seg("L1", 0, 0, 10, 0)
+    wall_a = _seg("WA", 0, 0, 0, 5)
+    wall_b = _seg("WB", 10, 0, 10, 5)
+    off = _seg("OFF", 0, 4, 6, 8)  # infinite-line foot is off y=0
+    res = trim_to_closest([l1, wall_a, wall_b, off], Pt(5.0, 0.0), "L1")
+    assert res.ok and not res.trims
+    assert res.deletions == ["L1"]
+    assert SPAN_DELETE_WARNING in res.warnings
+
+
+def test_manual_edit_span_stops_at_joint_attachment():
+    """Two collinear segments, a third line only at the shared endpoint,
+    and a wall at the far end of the clicked segment. The shared endpoint
+    is the first intersection; the second segment is not deleted."""
+    m1 = _seg("M1", 0, 0, 10, 0)
+    m2 = _seg("M2", 10, 0, 20, 0)
+    third = _seg("T", 10, 0, 10, 5)
+    wall = _seg("W", 0, 0, 0, 5)
+    res = trim_to_closest([m1, m2, third, wall], Pt(4.0, 0.0), "M1")
+    assert res.ok and not res.trims
+    assert res.deletions == ["M1"]
+    assert "M2" not in res.deletions
+    assert SPAN_DELETE_WARNING in res.warnings
+
+
+def test_manual_edit_span_keeps_collinear_gap_in_the_piece():
+    """No other geometry at the joint: both collinear segments are one
+    span and both are deleted."""
+    m1 = _seg("M1", 0, 0, 10, 0)
+    m2 = _seg("M2", 10, 0, 20, 0)
+    wall_a = _seg("WA", 0, 0, 0, 5)
+    wall_b = _seg("WB", 20, 0, 20, 5)
+    res = trim_to_closest([m1, m2, wall_a, wall_b], Pt(5.0, 0.0), "M1")
+    assert res.ok and not res.trims
+    assert set(res.deletions) == {"M1", "M2"}
+    assert SPAN_DELETE_WARNING in res.warnings
+
+
+def test_manual_edit_span_deletes_segment_past_both_crossings():
+    """The clicked segment continues past the nearest crossing on each
+    side. Delete that whole segment. The collinear neighbor past the
+    far end is not deleted."""
+    subject = _seg("S", 0, 0, 20, 0)
+    wall = _seg("W", 0, 0, 0, 5)
+    left = _seg("C1", 6, -5, 6, 5)
+    right = _seg("C2", 14, -5, 14, 5)
+    neighbor = _seg("N", 20, 0, 30, 0)
+    res = trim_to_closest(
+        [subject, wall, left, right, neighbor], Pt(10.0, 0.0), "S")
+    assert res.ok and not res.trims
+    assert res.deletions == ["S"]
+    assert "N" not in res.deletions
+    assert SPAN_DELETE_WARNING in res.warnings
+
+
+def test_manual_edit_span_shortens_member_past_one_crossing():
+    """Walls at both ends and one interior crossing. The member continues
+    past that crossing only, so the surviving stub is an on-axis trim."""
+    l1 = _seg("L1", 0, 0, 20, 0)
+    wall_a = _seg("WA", 0, 0, 0, 5)
+    wall_b = _seg("WB", 20, 0, 20, 5)
+    cross = _seg("C", 8, -5, 8, 5)
+    res = trim_to_closest(
+        [l1, wall_a, wall_b, cross], Pt(4.0, 0.0), "L1")
+    assert res.ok and not res.deletions and len(res.trims) == 1
+    new_a, new_b = res.trims[0].new
+    assert abs(new_a.x - 8.0) < TOL and abs(new_a.y) < TOL
+    assert abs(new_b.x - 20.0) < TOL and abs(new_b.y) < TOL
+    assert res.warnings == []
 
 
 def test_manual_edit_degenerate_candidate_at_moving_point_rejected():

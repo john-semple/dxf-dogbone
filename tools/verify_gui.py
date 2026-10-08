@@ -290,9 +290,10 @@ def verify_apply_undo_sequence(root: tk.Tk) -> tuple[bool, str]:
     """M4 DoD sequence: queue 2 corners (same R per decision 3; corners
     2+3, both R=3.175) -> Apply All -> assert 2 dogbones in CLICK ORDER
     (golden centers) -> Undo once -> full pre-apply ModelState equality
-    (incl. flag_decisions) -> second Undo -> original -> re-queue +
-    re-apply (apply-undo-apply) -> undo to bottom: disabled not
-    crashed."""
+    (incl. flag_decisions) and both corners back on the queue -> undo
+    each corner newest-first -> undo the load snapshot -> re-queue +
+    re-apply -> undo the batch, then each corner, then the bottom is
+    disabled not crashed."""
     result = load(BEFORE)
     model = Model(result.model_state)
     viewer = Viewer(root, width=1100, height=750)
@@ -327,17 +328,27 @@ def verify_apply_undo_sequence(root: tk.Tk) -> tuple[bool, str]:
     _check("undo-seq dogbone2 center.y", c2.center.y, CORNERS[0]["center"][1])
     root.update()
 
-    # --- Undo once -> full pre-apply state equality ---
+    # --- Undo once -> pre-apply drawing, both corners back on the queue ---
     assert ui.undo()
     assert model.state == pre_apply, \
         "undo must restore the exact pre-apply ModelState"
     assert len(model.state.dogbones) == 0
+    assert len(ui.queue.queue) == 2, "Apply All undo puts both corners back"
     root.update()
 
-    # --- second Undo -> load snapshot (original) ---
+    # --- each queued corner, newest first; the drawing stays pre-apply ---
     assert ui.undo()
-    assert model.state == original, "second undo must land on the original"
+    assert len(ui.queue.queue) == 1
+    assert model.state == pre_apply
+    assert ui.undo()
+    assert ui.queue.queue == []
+    assert model.state == pre_apply
+
+    # --- load snapshot (original) ---
+    assert ui.undo()
+    assert model.state == original, "undo after the corners must land on the original"
     assert len(model.state.dogbones) == 0
+    assert ui.stack.can_undo() is False
     root.update()
 
     # --- re-queue + re-apply (apply-undo-apply) ---
@@ -352,23 +363,28 @@ def verify_apply_undo_sequence(root: tk.Tk) -> tuple[bool, str]:
     assert len(model.state.dogbones) == 2
     root.update()
 
-    # --- undo to bottom: the load seed was consumed by the first
-    # phase's two undos, so this batch's stack carries only its own
-    # pre-batch snapshot (geometrically the original; n<seq> counters
-    # advanced by the first pass, so compare against the captured
-    # pre-batch snapshot). One undo lands on it; the next is at the
-    # bottom: disabled, not crashed. ---
+    # --- undo to bottom: the load seed was consumed in the first phase,
+    # so this batch's stack carries only its own pre-batch snapshot.
+    # Undo restores that drawing and the two corners; each corner undoes
+    # next; the following undo is at the bottom: disabled, not crashed. ---
     assert ui.undo()
     assert model.state == pre_reapply, \
         "undo after re-apply must land on the exact pre-batch state"
+    assert len(ui.queue.queue) == 2
+    assert ui.undo()
+    assert ui.undo()
+    assert ui.queue.queue == []
+    assert model.state == pre_reapply
     assert ui.undo() is False, "undo at stack bottom must return False"
     assert ui.stack.can_undo() is False
     root.update()
 
     viewer.canvas.destroy()
     return True, ("apply-undo-apply: 2 corners queued -> applied in click "
-                 "order -> 1st undo exact pre-apply -> 2nd undo original "
-                 "-> re-apply -> undo-at-bottom disabled not crashed")
+                 "order -> undo Apply All restores both corners -> each "
+                 "corner undoes newest-first -> undo original -> re-apply "
+                 "-> undo batch and corners -> undo-at-bottom disabled "
+                 "not crashed")
 
 
 def verify_revert_flow(root: tk.Tk) -> tuple[bool, str]:

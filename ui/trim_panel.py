@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import tkinter as tk
+import tkinter.font as tkfont
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
@@ -33,7 +34,8 @@ from geometry.entities import EditResult, Entity, Pt, Seg
 from model.model import Model
 from model.snapshots import SnapshotStack
 from rules.filters import eps_pick_from_scale, promoted_edge_at
-from rules.manual_edit import trim_to_closest
+from rules.manual_edit import SPAN_DELETE_WARNING, trim_to_closest
+from ui.collapsible import CollapsibleSection
 from ui.theme import COLORS as THEME, font as theme_font
 import ui.messages as msg
 
@@ -113,8 +115,10 @@ class TrimFSM:
                 inline=msg.TRIM_TOAST_REFUSED.format(reason=res.reason))
             return
         if res.deletions:
-            self._set_status(msg.TRIM_PREVIEW_STATUS,
-                             inline=msg.TRIM_PREVIEW_DELETE)
+            inline = (msg.TRIM_PREVIEW_SPAN_DELETE
+                      if SPAN_DELETE_WARNING in res.warnings
+                      else msg.TRIM_PREVIEW_DELETE)
+            self._set_status(msg.TRIM_PREVIEW_STATUS, inline=inline)
         else:
             self._set_status(msg.TRIM_PREVIEW_STATUS)
 
@@ -135,8 +139,12 @@ class TrimFSM:
             return None
         self.ports.apply(res)
         self.applied_count += 1
-        toast = (msg.TRIM_DELETE_APPLIED if res.deletions
-                 else msg.TRIM_TOAST_APPLIED)
+        if not res.deletions:
+            toast = msg.TRIM_TOAST_APPLIED
+        elif SPAN_DELETE_WARNING in res.warnings:
+            toast = msg.TRIM_SPAN_DELETE_APPLIED
+        else:
+            toast = msg.TRIM_DELETE_APPLIED
         self._clear_pick()
         self._set_status(toast + "  " + msg.TRIM_PICK_STATUS)
         return res
@@ -173,7 +181,7 @@ class TrimPanel(ttk.Frame):
 
     def __init__(self, master, viewer: Viewer, model: Model | None,
                  stack: SnapshotStack | None = None, on_status=None):
-        super().__init__(master, style="TFrame", padding=(10, 6))
+        super().__init__(master, style="TFrame")
         self.viewer = viewer
         self.model = model  # may be None at construction; App sets it
         self.stack = stack
@@ -182,14 +190,20 @@ class TrimPanel(ttk.Frame):
         self._bound = False
         self._saved_bindings: dict[str, str] = {}
         self._pan_from: tuple[float, float] | None = None
-        self._pill: tk.Frame | None = None
+        self._pill: tk.Canvas | None = None
 
-        ttk.Label(self, text="Manual Edit", style="TLabel",
-                  font=theme_font(10, "bold")).pack(anchor="w", pady=(0, 6))
-        self.mode_btn = ttk.Button(self, text=msg.TRIM_MODE_TOGGLE_ON,
-                                   style="TButton",
+        self.section = CollapsibleSection(self, msg.SECTION_TRIM)
+        self.section.pack(fill=tk.X, pady=(0, 6))
+        self.mode_btn = ttk.Button(self.section.body, text=msg.TRIM_MODE_TOGGLE_ON,
+                                   style="TrimMode.TButton",
                                    command=self.toggle_mode)
         self.mode_btn.pack(fill=tk.X)
+        self.hint = tk.Label(
+            self.section.body, text=msg.TRIM_HINT,
+            bg=THEME["bg"], fg=THEME["fg_muted"],
+            font=theme_font(9), wraplength=248, justify="left", anchor="w",
+        )
+        self.hint.pack(anchor="w", fill=tk.X, pady=(4, 0))
         self._emit_status()
 
     # ------------------------------------------------------------- ports
@@ -227,9 +241,10 @@ class TrimPanel(ttk.Frame):
         self._clear_overlays()
 
     def _refresh_button(self) -> None:
+        on = self.fsm.mode == TrimMode.ON
         self.mode_btn.config(
-            text=(msg.TRIM_MODE_TOGGLE_OFF if self.fsm.mode == TrimMode.ON
-                  else msg.TRIM_MODE_TOGGLE_ON))
+            text=(msg.TRIM_MODE_TOGGLE_OFF if on else msg.TRIM_MODE_TOGGLE_ON))
+        self.section.set_summary(msg.SECTION_MODE_ON if on else "")
 
     def _emit_status(self) -> None:
         if self._on_status is not None:
@@ -283,8 +298,9 @@ class TrimPanel(ttk.Frame):
         self._refresh_button()
         self._emit_status()
 
-    def _on_esc(self, _ev) -> None:
+    def _on_esc(self, _ev) -> str:
         self._on_right(None)
+        return "break"
 
     def _on_pan_press(self, ev) -> None:
         self._pan_from = (ev.x, ev.y)
@@ -346,8 +362,11 @@ class TrimPanel(ttk.Frame):
         self._show_confirm_pill()
 
     def _show_confirm_pill(self) -> None:
-        """Floating Confirm button near the run's moving end (the M3
-        pill pattern; text differs: CONFIRM TRIM)."""
+        """Floating confirm near the run's moving end.
+
+        Same pill as the dogbone Confirm button and the flag choices:
+        muted grey fill, light label, fully rounded ends.
+        """
         self._destroy_pill()
         if self.fsm.pending is None or self.fsm.picked_seg is None:
             return
@@ -362,20 +381,26 @@ class TrimPanel(ttk.Frame):
             moving = Pt((seg.a.x + seg.b.x) / 2.0,
                          (seg.a.y + seg.b.y) / 2.0)
         cx, cy = t.to_screen(moving)
+        label = msg.TRIM_PILL_CONFIRM
+        font = tkfont.Font(root=self.viewer.canvas, font=theme_font(9))
+        width = int(font.measure(label) + 36)
+        height = 30
         w = max(1, self.viewer.canvas.winfo_width())
         h = max(1, self.viewer.canvas.winfo_height())
-        x = min(max(cx + 12, 8), max(w - 200, 8))
-        y = min(max(cy - 40, 8), max(h - 90, 8))
-        pill = tk.Frame(self.viewer.canvas, bd=2, relief=tk.RAISED,
-                        bg=THEME["pill_bg"], highlightthickness=2,
-                        highlightbackground=THEME["pill_btn_active"],
-                        highlightcolor=THEME["pill_btn_active"])
-        tk.Button(pill, text=msg.TRIM_PILL_CONFIRM, command=self.confirm_click,
-                  bg=THEME["pill_btn_bg"],
-                  activebackground=THEME["pill_btn_active"],
-                  fg=THEME["pill_btn_fg"],
-                  font=theme_font(14, "bold"), bd=0, width=12, height=2,
-                  cursor="hand2").pack(padx=6, pady=6)
+        x = min(max(cx + 12, 8), max(w - width - 8, 8))
+        y = min(max(cy - height - 8, 8), max(h - height - 8, 8))
+        pill = tk.Canvas(
+            self.viewer.canvas, width=width, height=height,
+            highlightthickness=0, bd=0, bg=THEME["canvas_bg"],
+            cursor="hand2")
+        _paint_trim_pill(pill, width, height, label, hover=False)
+
+        def _hover(on: bool) -> None:
+            _paint_trim_pill(pill, width, height, label, hover=on)
+
+        pill.bind("<Enter>", lambda _e: _hover(True))
+        pill.bind("<Leave>", lambda _e: _hover(False))
+        pill.bind("<Button-1>", lambda _e: self.confirm_click())
         self.viewer.canvas.create_window(x, y, window=pill, anchor="nw",
                                          tags=(TRIM_PILL_TAG,))
         self._pill = pill
@@ -386,6 +411,43 @@ class TrimPanel(ttk.Frame):
         self._clear_overlays()
         self._emit_status()
         return res
+
+
+def _rounded_points(x1: float, y1: float, x2: float, y2: float,
+                    r: float, steps: int = 8) -> list[float]:
+    """Corner samples in canvas space (y grows downward).
+
+    Same construction as the dogbone dock pills.
+    """
+    r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
+    pts: list[float] = []
+    corners = (
+        (x2 - r, y1 + r, 270, 360),
+        (x2 - r, y2 - r, 0, 90),
+        (x1 + r, y2 - r, 90, 180),
+        (x1 + r, y1 + r, 180, 270),
+    )
+    for cx, cy, a0, a1 in corners:
+        for i in range(steps + 1):
+            a = math.radians(a0 + (a1 - a0) * i / steps)
+            pts.append(cx + r * math.cos(a))
+            pts.append(cy + r * math.sin(a))
+    return pts
+
+
+def _paint_trim_pill(canvas: tk.Canvas, width: int, height: int,
+                     label: str, *, hover: bool) -> None:
+    """Draw the trim confirm as the dogbone dock button."""
+    canvas.delete("all")
+    fill = THEME["dock_btn_hover"] if hover else THEME["dock_btn"]
+    canvas.create_polygon(
+        _rounded_points(1, 1, width - 2, height - 2, height / 2),
+        smooth=False, fill=fill, outline=THEME["dock_edge"], width=1,
+        tags=("confirm",))
+    canvas.create_text(
+        width / 2, height / 2, text=label,
+        fill=THEME["dock_text"], font=theme_font(9),
+        tags=("confirm-label",))
 
 
 def _end_is_a(seg: Seg, res: EditResult) -> bool:

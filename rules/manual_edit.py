@@ -21,6 +21,9 @@ Semantics locked by the user's spec answers (2026-10-07):
   * whole promoted run is the subject; run's own members are never
     candidates; folds fully allowed both ways;
   * no attachment cascade (manual fix = explicit; neighbors untouched).
+  * ADR-028: a click between intersections on both sides removes that
+    collinear span (deletion, or one on-axis trim of a one-sided stub)
+    instead of rotating onto a perpendicular foot.
 """
 from __future__ import annotations
 
@@ -36,6 +39,7 @@ from geometry.entities import (
     PointEnt,
     Pt,
     Seg,
+    TextEnt,
     Trim,
 )
 from geometry.runs import chain_run
@@ -43,6 +47,11 @@ from geometry.tolerances import EPS_COINCIDE, EPS_CONSTRUCTION
 
 REFUSAL_UNKNOWN = "UNKNOWN_EDGE: {eid} is not resolvable in primitives"
 REFUSAL_NO_TARGET = "NO_TARGET: no supporting-geometry intersection found"
+# ADR-028: pinned on a both-sides span deletion so the UI does not reuse
+# the stray sentence. The foot path and the stray rule leave warnings empty.
+SPAN_DELETE_WARNING = (
+    "SPAN_DELETE: the collinear span up to the nearest intersection on each side"
+)
 
 
 def _refused(reason: str) -> EditResult:
@@ -104,6 +113,170 @@ def _external_attachments(
     return attached - own
 
 
+def _record_stop(stops: list[float], t: float, eps: float) -> None:
+    for existing in stops:
+        if abs(existing - t) <= eps:
+            return
+    stops.append(t)
+
+
+def _on_segment(a: Pt, b: Pt, p: Pt, eps: float) -> bool:
+    return go.point_seg_dist(p, a, b) <= eps
+
+
+def _strict_interior(a: Pt, b: Pt, p: Pt, eps: float) -> bool:
+    """True when ``p`` lies on segment a-b and is farther than ``eps`` from
+    both endpoints. Endpoint hits are attachment stops, not interior crossings."""
+    if not _on_segment(a, b, p, eps):
+        return False
+    return go.dist(p, a) > eps and go.dist(p, b) > eps
+
+
+def _span_delete(ent_eids: tuple[str, ...], kill: set[str]) -> EditResult:
+    return EditResult(
+        ok=True,
+        reason=None,
+        deletions=[eid for eid in ent_eids if eid in kill],
+        trims=[],
+        warnings=[SPAN_DELETE_WARNING],
+    )
+
+
+def _span_between_intersections(
+    primitives: list[Entity],
+    p_world: Pt,
+    run: Seg,
+    ent_eids: tuple[str, ...],
+    eps_construction: float,
+    eps_coincide: float,
+) -> EditResult | None:
+    """ADR-028. The collinear piece is the chain run. Walk both ways from
+    the click and stop at the first intersection on each side.
+
+    An intersection is an external attachment at a piece endpoint, or a
+    finite crossing through the piece interior. Collinear neighbors joined
+    only by an endpoint gap stay in the piece. Returns None when either
+    side is open — that click stays on the ADR-025 perpendicular-foot path.
+    """
+    rx = run.b.x - run.a.x
+    ry = run.b.y - run.a.y
+    run_len = math.hypot(rx, ry)
+    if run_len <= eps_construction:
+        return None
+    ux, uy = rx / run_len, ry / run_len
+
+    def proj(p: Pt) -> float:
+        return (p.x - run.a.x) * ux + (p.y - run.a.y) * uy
+
+    def point_at(t: float) -> Pt:
+        return Pt(run.a.x + ux * t, run.a.y + uy * t)
+
+    segs = {e.eid: e for e in primitives if isinstance(e, Seg)}
+    members = [segs[eid] for eid in ent_eids if eid in segs]
+    if not members:
+        return None
+    piece = set(ent_eids)
+
+    stops: list[float] = []
+    for member in members:
+        for end in (member.a, member.b):
+            for e in primitives:
+                if e.eid in piece:
+                    continue
+                for ax, ay in attachment_points(e):
+                    if math.hypot(end.x - ax, end.y - ay) <= eps_coincide:
+                        _record_stop(stops, proj(end), eps_coincide)
+                        break
+
+    for e in primitives:
+        if e.eid in piece:
+            continue
+        for member in members:
+            if isinstance(e, Seg):
+                hit = go.line_intersection(
+                    member.a, member.b, e.a, e.b, eps_construction)
+                if hit is None:
+                    continue
+                if _strict_interior(member.a, member.b, hit, eps_coincide) \
+                        and _on_segment(e.a, e.b, hit, eps_coincide):
+                    _record_stop(stops, proj(hit), eps_coincide)
+            elif isinstance(e, (Arc, Circ)):
+                for hit in go.line_circle_intersections(
+                        member.a, member.b, e.center, e.r):
+                    if not _strict_interior(
+                            member.a, member.b, hit, eps_coincide):
+                        continue
+                    if isinstance(e, Arc) and not go.span_contains(
+                            e.start_deg, e.end_deg,
+                            go.pt_angle_deg(e.center, hit),
+                            eps_construction):
+                        continue
+                    _record_stop(stops, proj(hit), eps_coincide)
+            elif isinstance(e, (PointEnt, TextEnt)):
+                p = e.p
+                if _strict_interior(member.a, member.b, p, eps_coincide):
+                    _record_stop(stops, proj(p), eps_coincide)
+
+    t_click = proj(p_world)
+    left = [t for t in stops if t < t_click - eps_coincide]
+    right = [t for t in stops if t > t_click + eps_coincide]
+    if not left or not right:
+        return None
+    t_lo, t_hi = max(left), min(right)
+
+    overlap: list[Seg] = []
+    past_lo: list[Seg] = []
+    past_hi: list[Seg] = []
+    inside: list[Seg] = []
+    for member in members:
+        s0, s1 = sorted((proj(member.a), proj(member.b)))
+        if not (s1 > t_lo + eps_coincide and s0 < t_hi - eps_coincide):
+            continue
+        overlap.append(member)
+        lo_past = s0 < t_lo - eps_coincide
+        hi_past = s1 > t_hi + eps_coincide
+        if lo_past and hi_past:
+            past_lo.append(member)
+            past_hi.append(member)
+        elif lo_past:
+            past_lo.append(member)
+        elif hi_past:
+            past_hi.append(member)
+        else:
+            inside.append(member)
+
+    past_both = [m for m in past_lo if m in past_hi]
+    if past_both or (past_lo and past_hi):
+        # A window through one segment cannot be cut with one Trim.
+        # Delete each such segment whole. Members that merely begin at an
+        # intersection and run outward are not in ``overlap``.
+        if past_both:
+            kill = {m.eid for m in past_both} | {m.eid for m in inside}
+        else:
+            kill = {m.eid for m in overlap}
+        if not kill:
+            return None
+        return _span_delete(ent_eids, kill)
+
+    if past_lo or past_hi:
+        # Surviving stub is on one side only. One on-axis Trim; apply_edit
+        # shortens the straddler and drops members wholly in the removed span.
+        if past_hi:
+            new_a, new_b = point_at(t_hi), run.b
+        else:
+            new_a, new_b = run.a, point_at(t_lo)
+        return EditResult(
+            ok=True,
+            reason=None,
+            deletions=[],
+            trims=[Trim(eid=run.eid, old=(run.a, run.b), new=(new_a, new_b))],
+        )
+
+    if not inside:
+        return None
+    return _span_delete(ent_eids, {m.eid for m in inside})
+
+
 def _closest_on_line(run: Seg, target: Seg) -> Pt | None:
     """Deprecated helper kept out of the pipeline (unused); see the inline
     candidate loop. Left as documentation of the perpendicular-foot rule."""
@@ -132,6 +305,13 @@ def trim_to_closest(
             deletions=list(ent_eids) or [run.eid],
             trims=[],
         )
+
+    # ADR-028: both sides of the click closed by an intersection. Otherwise
+    # fall through to the perpendicular-foot path below.
+    spanned = _span_between_intersections(
+        primitives, p_world, run, ent_eids, eps_construction, eps_coincide)
+    if spanned is not None:
+        return spanned
 
     # -- which extent endpoint moves: the one nearest the click --
     d_a = go.dist(p_world, run.a)
