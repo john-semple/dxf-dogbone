@@ -182,9 +182,9 @@ class App:
             command=self.close_dxf)
         self.close_btn.pack(side=tk.RIGHT, padx=8, pady=2)
         # Left rail, packed BEFORE the canvas so the expanding canvas
-        # cannot squeeze it. Undo/Redo/Revert stay pinned. Dogbone,
-        # Folds, and Trim share one column and scroll only when that
-        # column is taller than the rail.
+        # cannot squeeze it. Undo/Redo/Revert stay pinned. Step 1
+        # (folds), Step 2 (dogbone), and Step 3 (trim) share one column
+        # and scroll only when that column is taller than the rail.
         self.sidebar = Sidebar(root, on_hover=self._sidebar_hover)
         self.sidebar.pack(fill=tk.Y, side=tk.LEFT, pady=(0, 0))
         rail = self.sidebar.body
@@ -195,12 +195,12 @@ class App:
                                on_radius_change=self.on_radius_change,
                                command_parent=self.sidebar.pin)
         self.panel.commands.pack(fill=tk.X)
-        self.panel.dogbone.pack(fill=tk.X, pady=(0, 6))
         self.viewer = Viewer(root, on_status=self.mouse_var.set)
         self.fold_panel = FoldPanel(
             rail, self.viewer, self.model,
             on_status=self.status_var.set)
         self.fold_panel.pack(fill=tk.X, side=tk.TOP)
+        self.panel.dogbone.pack(fill=tk.X, pady=(0, 6))
         # ADR-025: manual trim panel (stack is created with the workflow;
         # the panel gets it at _ensure_workflow time)
         self.trim_panel = TrimPanel(

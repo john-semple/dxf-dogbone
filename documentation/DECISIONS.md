@@ -485,3 +485,23 @@ If every member of that span lies wholly inside it, the result is a deletion of 
 **Alternatives:** Store the queue in `ModelState` (rejected: ADR-016(j); Revert's keep-queue rule would ride along inside the snapshot). Clear the whole queue on every Undo (rejected: a corner queued after an apply would vanish when that apply was undone). Split one Apply All into one snapshot per dogbone (rejected: the batch stays one drawing step; the corners come off the list after that step is undone).
 
 **Consequence:** SPEC §11.7 and CONTRACTS §5 name this. `ApplyQueue` and the contents of a `SnapshotStack` snapshot are unchanged. Tests live in `tests/test_ui_unapplied_undo.py`. The `verify_gui.py` apply-undo drive restores the batch, then undoes each corner, before it reaches the load snapshot. ISSUES.md was not edited.
+
+## ADR-030 — 2026-10-09 — Long lines are trimmed to the dogbone, not deleted
+
+**Decision:** An undesignated straight line with an end inside the dogbone circle is still deleted when its length is at most 3 mm (`DELETE_MAX_MM` in `rules/engine.py`), or when both ends are inside the circle. If the line is longer than 3 mm and only one end is inside, that end moves to the circle crossing nearest the outside end. The other end stays. The attachment cascade does not then delete that line: the end it would have called dangling is the end the trim just moved. A longer line whose end already lies on the circle, and whose body stays outside, is left unchanged. Designated folds stay exempt; export still trims those.
+
+**Why:** A bend that was not marked as a fold was deleted in full when one end sat in the relief. On the rectangular samples the tear scraps are at most 2.121 mm and the next real lines are 10 mm, so 3 mm removes the tears and keeps a forgotten bend. Both ends inside means the whole segment lies in the cut, so length does not save it.
+
+**Alternatives:** Cap at the 4×-diameter window, 12.7 mm for the default tool (rejected: that still deletes the 10 mm lines on these files). Cap at under 2 mm (rejected: the tear floors are exactly 2 mm). Ask with a flag instead of trimming (rejected: a forgotten bend would block Apply All again).
+
+**Consequence:** SPEC §11.5 rows for a line end in or on the circle, and the `place_corner` note in CONTRACTS §2, follow this. `Model.apply_corner` already applies a segment `Trim`. ISSUES.md was not edited.
+
+## ADR-031 — 2026-10-09 — Designated folds trim when the dogbone is applied
+
+**Decision:** A designated fold is still never deleted. When `place_corner` builds a dogbone, it trims that fold with `resolve_folds`, the same rule export uses, against the new relief and any dogbones already placed. The trim is part of the corner result, so the preview and Apply All move the endpoint onto the relief arc. Export runs the same function again and leaves an end that is already on the arc. An endpoint farther than the extend cap stays put, with the existing out-of-reach warning.
+
+**Why:** ADR-030 trims a long undesignated line, and the protected-fold rule skipped designated bends, so a marked bend still ran into the relief until export.
+
+**Alternatives:** Trim a designated fold with the 3 mm line rule (rejected: folds already have an arc-span rule, including extend). Trim only at export (rejected: the working drawing kept the bend across the cut).
+
+**Consequence:** SPEC §4.5 and the CONTRACTS §2 `place_corner` note say the trim happens at apply and again at export. ISSUES.md was not edited.

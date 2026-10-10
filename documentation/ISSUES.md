@@ -212,6 +212,12 @@ Dogbone, Folds, and Trim stay one column and scroll only when that column is
 taller than the rail. The wheel does nothing when they fit, and the column
 cannot scroll into blank space above Dogbone. The Trim section shows a muted
 hint under the button (`TRIM_HINT`).
+Follow-up 2026-10-09 (session log `documentation/sessions/2026-10-09-RAIL-STEPS.md`):
+rail order is **Step 1 — Designate Fold Lines**, **Step 2 — Dogbone**, **Step 3 — Trim**
+(`SECTION_FOLDS`, `SECTION_DOGBONE`, `SECTION_TRIM` in `ui/messages.py`). The Step 1
+title wraps so it stays beside the fold count. Pin strip and scroll behavior are
+unchanged. Presentation only. Recorded on `documentation/briefs/UI-UPGRADE.md`
+("Revision — 2026-10-09") and in `README.md` Use.
 
 ### ISSUE-022 (done) — Flag prompt is a card at the pointer
 User request 2026-10-08: the centered Yes/No box for a chord-crosser did not show which line it meant. Executed the same day (session log `documentation/sessions/2026-10-08-CHORD-PROMPT.md`, which is the behavior spec). Every interactive flag uses that card. One thick orange highlight marks the entity under the question. One line of copy sits above Delete and Keep, with an `{n}/{m}` count at the top right. Delete sits on the ghost-click pointer; Keep is beside it. If that spot would cover the relief circle, the card steps aside. The zoom is not panned. Chord-crossers are asked first, then the other reasons, on that same pinned spot. Confirm replaces the card there, with no blank text line and no count. The card window does not take the click; the canvas under it does, so Confirm accepts the next click without a pause and without moving the pointer. The button under that pointer is already the lighter grey when the card is drawn. A double-click on the last Delete also confirms. Harness path `_prompt_pending_flags` is unchanged. Sticky decisions and the confirm-gate are unchanged. SPEC §11.5 points here.

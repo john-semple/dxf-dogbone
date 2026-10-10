@@ -187,7 +187,12 @@ def place_corner(primitives: list[Entity], edge1_eid: str, edge2_eid: str, side:
                  # rebuild uniqueness/cascade/span identity/assembly) — public API and all
                  # refusal/warning strings byte-identical.
                  # full rule pipeline, in order: radius validation -> apex gate -> overlap vs existing dogbones ->
-                 # circle construction → deletion truth table (SPEC §11.5) → edge rebuild (ADR-003 ops:
+                 # circle construction → deletion truth table (SPEC §11.5; ADR-030: an undesignated
+                 # LINE longer than 3 mm with only one end inside the circle is trimmed to the
+                 # circle instead of deleted. Both ends inside, or length ≤ 3 mm, still deletes.
+                 # A longer line whose end already lies on the circle and whose body stays outside
+                 # is left unchanged. Designated folds are never deleted; place_corner trims them
+                 # to the relief arc with the export rule (ADR-031).) → edge rebuild (ADR-003 ops:
                  # rebuilt endpoint = UNIQUE NON-APEX intersection of the edge's supporting line with the
                  # dogbone circle; refusals: line tangent to circle; post-rebuild opposite endpoint not
                  # on the far side of the rebuilt point (segment no longer spans)) → fold interaction stubs

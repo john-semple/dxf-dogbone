@@ -61,7 +61,7 @@ Manual corner add: **user explicitly clicks the two edges** (user input is the s
 - Fold lines are straight `LINE` entities **only** (for now).
 - Fold lines are never collinear with / lying on top of contour lines (user: "should never meet").
 - **Extend/trim rule:** fold-line endpoints end **exactly at the dogbone arc** — extend straight if short, trim if crossing ("extend until it bumps into something, usually the dogbone"). Confirmed in sample: one fold line was trimmed where dogbone crossed it, others extended to reach the arc.
-- **Trim/extend executes at export time** against all applied dogbones — order-independent, so folds can be designated before or after radiusing.
+- **Trim/extend runs when the dogbone is applied, and again at export.** Export is idempotent, so an end already on the relief arc is left alone. Folds can be designated before or after radiusing; a fold marked after the dogbone is trimmed at export.
 
 ## 5. GUI Behavior
 
@@ -167,8 +167,8 @@ For each entity in the 4×-diameter window (window is a **prefilter only** — t
 
 | Case | Action |
 |---|---|
-| LINE, one endpoint in circle | delete |
-| LINE, endpoint exactly on circle (±EPS_COINCIDE) | counts as inside → delete |
+| LINE, one endpoint in circle | delete when the line is ≤ 3 mm, or when both ends are inside. Longer, with the other end outside: trim the inside end to the circle (ADR-030) |
+| LINE, endpoint exactly on circle (±EPS_COINCIDE) | counts as inside. ≤ 3 mm → delete. Longer, and the rest of the line stays outside → leave it |
 | LINE tangent to circle | no-op |
 | LINE chord-crosser (both endpoints outside) | **flagged** (v3): user chooses delete or keep; keep → sticky decision (see flow below) |
 | ARC, ≥1 endpoint inside circle (v3) | delete, **flagged** |

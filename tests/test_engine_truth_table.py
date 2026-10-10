@@ -7,7 +7,14 @@ import math
 
 from geometry import geomops as go
 from geometry.entities import Arc, Circ, Dogbone, PointEnt, Pt, Seg, Side, TextEnt
-from rules.engine import arc_crosses_circle, fold_circle_intersections, place_corner
+from model.model import Model
+from model.state import ModelState
+from rules.engine import (
+    DELETE_MAX_MM,
+    arc_crosses_circle,
+    fold_circle_intersections,
+    place_corner,
+)
 
 C_CENTER = Pt(1.122532, -1.122532)
 R = 1.5875
@@ -30,13 +37,76 @@ def place(prims, **kw):
 
 
 def test_engine_truth_table_line_endpoint_in_and_on_circle():
-    epin = Seg("epin", Pt(0.5, -0.5), Pt(5.0, -5.0))  # (0.5,-0.5) dist 0.880 < R
-    # endpoint exactly ON the circle counts as inside (§11.5 row 2)
-    onc = Seg("oncirc", Pt(1.122532, 0.464968), Pt(6.0, 3.0))
+    # At or under DELETE_MAX_MM the whole line is still deleted, including
+    # an end that merely lies on the circle (§11.5 row 2, ADR-030).
+    epin = Seg("epin", Pt(1.622532, -1.122532), Pt(3.622532, -1.122532))  # len 2
+    onc = Seg("oncirc", Pt(1.122532, 0.464968), Pt(1.122532, 1.464968))  # len 1, on circle
+    assert go.dist(epin.a, epin.b) <= DELETE_MAX_MM
+    assert go.dist(onc.a, onc.b) <= DELETE_MAX_MM
     res = place(base_prims([epin, onc]))
     assert res.ok
     assert "epin" in res.deletions and "oncirc" in res.deletions
     assert not any(f.eid in ("epin", "oncirc") for f in res.flags)
+
+
+def test_engine_truth_table_long_line_one_end_in_trims_to_circle():
+    # Longer than the cap, one end inside: trim that end, keep the rest.
+    far = Pt(1.622532 + DELETE_MAX_MM + 0.5, -1.122532)
+    long = Seg("long", Pt(1.622532, -1.122532), far)
+    assert go.dist(long.a, long.b) > DELETE_MAX_MM
+    # Exactly the cap still deletes.
+    capped = Seg("capped", Pt(1.622532, -2.122532), Pt(1.622532 + DELETE_MAX_MM, -2.122532))
+    assert abs(go.dist(capped.a, capped.b) - DELETE_MAX_MM) < 1e-9
+    # Both ends inside, and longer than the cap: the whole segment is in the cut.
+    both = Seg("both", Pt(1.122532 - 1.55, -1.122532), Pt(1.122532 + 1.55, -1.122532))
+    assert go.dist(both.a, both.b) > DELETE_MAX_MM
+    res = place(base_prims([long, capped, both]))
+    assert res.ok
+    assert "long" not in res.deletions
+    assert "capped" in res.deletions and "both" in res.deletions
+    assert not any(f.eid == "long" for f in res.flags)
+    assert len(res.trims) == 1
+    trim = res.trims[0]
+    assert trim.eid == "long" and trim.old == (long.a, long.b)
+    assert trim.new[1] == far
+    assert abs(go.dist(trim.new[0], C_CENTER) - R) < 1e-6
+    assert go.dist(trim.new[0], long.a) > 1e-3
+
+
+def test_engine_truth_table_long_line_on_circle_left_unchanged():
+    # End already on the circle, body running away: nothing to cut.
+    onc = Seg("oncirc", Pt(1.122532, 0.464968), Pt(6.0, 0.464968))
+    assert go.dist(onc.a, onc.b) > DELETE_MAX_MM
+    res = place(base_prims([onc]))
+    assert res.ok
+    assert "oncirc" not in res.deletions
+    assert not any(t.eid == "oncirc" for t in res.trims)
+    assert not any(f.eid == "oncirc" for f in res.flags)
+
+
+def test_engine_truth_table_long_line_touching_edge_is_not_cascade_deleted():
+    # The inside end lies on the vertical edge, inside the portion that
+    # rebuild cuts away. Cascade must not delete the line after the trim.
+    long = Seg("long", Pt(0.0, -0.5), Pt(10.0, -0.5))
+    res = place(base_prims([long]))
+    assert res.ok
+    assert "long" not in res.deletions
+    assert not any(f.eid == "long" for f in res.flags)
+    assert len(res.trims) == 1 and res.trims[0].eid == "long"
+    assert res.trims[0].new[1] == long.b
+    assert abs(go.dist(res.trims[0].new[0], C_CENTER) - R) < 1e-6
+
+
+def test_engine_truth_table_long_line_trim_applies():
+    far = Pt(1.622532 + DELETE_MAX_MM + 0.5, -1.122532)
+    long = Seg("long", Pt(1.622532, -1.122532), far)
+    prims = base_prims([long])
+    res = place(prims)
+    model = Model(ModelState(primitives=list(prims)))
+    model.apply_corner(res)
+    got = next(e for e in model.state.primitives if isinstance(e, Seg) and e.eid == "long")
+    assert got.b == far
+    assert abs(go.dist(got.a, C_CENTER) - R) < 1e-6
 
 
 def test_engine_truth_table_tangent_stray_no_op():
@@ -131,6 +201,14 @@ def test_engine_truth_table_protected_fold_exempt_and_fold_stub():
     assert res.ok
     assert "fold" not in res.deletions
     assert not any(f.eid == "fold" for f in res.flags)
+    fold_trims = [t for t in res.trims if t.eid == "fold"]
+    assert len(fold_trims) == 1
+    moved = [
+        new for new, old in zip(fold_trims[0].new, fold_trims[0].old) if new != old
+    ]
+    assert moved
+    for end in moved:
+        assert abs(go.dist(end, C_CENTER) - R) < 1e-4
     # §2 fold stub: intersection points computed for preview only
     xs = fold_circle_intersections(base_prims([fold]), {"fold"}, C_CENTER, R)
     assert len(xs["fold"]) == 2

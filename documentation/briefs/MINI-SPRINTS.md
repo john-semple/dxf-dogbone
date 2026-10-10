@@ -1,12 +1,16 @@
-# Debugging tasks — 2026-10-08
+# Mini sprints — 2026-10-08
 
-> **Status: Done** — tasks 1–7 completed 2026-10-08
+> Formerly `documentation/briefs/DEBUGGING.md`.
 
-Seven independent fixes. Give an agent **one** numbered task. It should read `AGENTS.md`, then this task only. It should not do the other tasks, and it should not edit `documentation/ISSUES.md` (no milestone row owns this file).
+> **Status: Done** — tasks 1–7 completed 2026-10-08; task 8 completed 2026-10-09
 
-When the task is done, append `documentation/sessions/2026-10-08-DEBUG-<n>.md` with what changed and the `pytest -q` output. Do not edit another session log.
+Eight short sprints, some bug fixes and some improvements. Give an agent **one** numbered task. It should read `AGENTS.md`, then this task only. It should not do the other tasks, and it should not edit `documentation/ISSUES.md` (no milestone row owns this file).
 
-`pytest -q` must pass before the session ends. These tasks do not change dogbone geometry, export purity, or the rule that `geometry/`, `rules/`, and `model/` import neither tkinter nor ezdxf.
+Tasks 1–7 do not change dogbone geometry. Task 8 does: it changes which lines a dogbone deletes. See ADR-030 and ADR-031.
+
+When the task is done, append `documentation/sessions/2026-10-08-DEBUG-<n>.md` with what changed and the `pytest -q` output. Task 8 is already logged in `documentation/sessions/2026-10-09-LONG-LINE.md`. Do not edit another session log.
+
+`pytest -q` must pass before the session ends. Export stays pure. `geometry/`, `rules/`, and `model/` import neither tkinter nor ezdxf.
 
 ## Open questions
 
@@ -238,7 +242,7 @@ Under that, add a checkbox for each layer in the file.
 - Mixed layer (some of its lines designated, some not): show the box unchecked, and do not change `fold_eids` until the user clicks it. A click from that state designates all of the layer's straight lines. The next click clears them.
 - After a manual fold click, undo, redo, or revert, refresh the checks from `fold_eids` (`on_model_change` already runs on undo/redo/revert).
 - User edits still win over a second automatic pass. Do not call `auto_preselect` again on undo. The existing once-per-load tests stay true.
-- A long list scrolls with the rail when the column is taller than the viewport. `Sidebar` already scrolls Dogbone, Folds, and Trim together in that case. Do not add a new window.
+- A long list scrolls with the rail when the column is taller than the viewport. `Sidebar` already scrolls Step 1 (folds), Step 2 (dogbone), and Step 3 (trim) together in that case. Do not add a new window.
 
 `test_fold_fsm_auto_preselect_custom_patterns` calls `auto_preselect` with an explicit pattern tuple. Leave that function able to take patterns. Update `test_fold_panel_default_patterns` so it still finds the entry, the default text `bend, fold, centerline`, and the new label.
 
@@ -323,3 +327,39 @@ Keep the floating CONFIRM CORNER pill and the Enter key. Those still confirm a c
 ### Tests
 
 `tests/test_ui_collapsible.py` builds `App` and does not mention `confirm_btn`. Keep it passing. Add an assertion that the bottom-right button's text is `msg.EXPORT_MENU` and that its command is `App.export_dialog`.
+
+---
+
+## 8. Long lines and marked bends are trimmed, not deleted
+
+> **Status: Done** — `documentation/sessions/2026-10-09-LONG-LINE.md`
+
+### What happens
+
+On `samples/base-rectangular - partially radiused.DXF`, a dogbone whose circle reaches a bend line does not apply cleanly. The ghost can be selected. Apply All does nothing until the corner is confirmed, and an unmarked bend is deleted in full. The same corners on `samples/base-rectangular-before-AI.DXF` apply. That file has no bend lines. Marking the bends keeps them, but they still run into the relief until export.
+
+The layer list does not grow a checkbox. This file has one layer, `0`. `FOLD_LINES` is written at export. The Folds header count is what shows a line was marked.
+
+### Why (verified)
+
+SPEC §11.5 deleted any straight line with an end inside the dogbone circle. On these two files the tear scraps are at most 2.121 mm (floors exactly 2.000 mm, walls 0.747 mm, diagonals 2.121 mm). The next real lines are 10 mm. The bends are about 44–138 mm. One end of a 59.6 mm bend inside a 1.5875 mm circle took the whole line.
+
+A designated fold is in the protected set, so that deletion did not run, and neither did the new trim. Fold extend/trim ran only in `resolve_folds` at export. The attachment cascade also deleted an unmarked bend whose old end lay on the edge portion the dogbone cut away (`CASCADE_DANGLING` on the bend, which blocks Confirm).
+
+### What to do
+
+ADR-030. In `rules/engine.py`, `DELETE_MAX_MM = 3.0`. An undesignated line with an end in the circle is still deleted when its length is at most 3 mm, or when both ends are inside. Longer, with only one end inside, that end moves to the circle crossing nearest the outside end. A longer line that already ends on the circle and stays outside is left alone. The cascade skips a line this trim just moved.
+
+ADR-031. A designated fold is still never deleted. `place_corner` runs `resolve_folds` on the new relief and any dogbones already placed, and puts those trims on the corner result. The preview and Apply All show the cut. Export runs the same function again and leaves an end already on the arc. An end past the extend cap stays put, with the existing out-of-reach warning.
+
+Update SPEC §11.5, SPEC §4.5, and the `place_corner` note in CONTRACTS §2. Do not edit `documentation/ISSUES.md`.
+
+### Do not
+
+- Do not delete a marked bend.
+- Do not use the 4×-diameter window (12.7 mm at the default tool) as the cap. That still deletes the 10 mm lines.
+- Do not cap at under 2 mm. The tear floors are exactly 2 mm.
+
+### Tests
+
+`tests/test_engine_truth_table.py`: a line at or under 3 mm with an end in or on the circle is deleted; a longer line with one end inside is trimmed and survives the cascade; a longer line that only touches the circle is unchanged; a designated fold is trimmed, not deleted. Golden corners on the before-AI file still delete only the short tears. `pytest -q` aside from the pre-existing Tk startup flake in `tests/test_theme.py::test_theme_apply_runs_on_throwaway_root`.

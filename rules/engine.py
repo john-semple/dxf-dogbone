@@ -46,6 +46,7 @@ K_OVERSHOOT = 5.0  # SPEC §11.4: apex within K*R of each edge segment
 HALF_ANGLE_MIN_DEG = 15.0  # SPEC §11.4 band (constants, tunable)
 HALF_ANGLE_MAX_DEG = 165.0
 WINDOW_FACTOR = 4.0  # SPEC §11.5: 4x tool DIAMETER window (prefilter only)
+DELETE_MAX_MM = 3.0  # ADR-030: longer undesignated lines are trimmed, not deleted
 
 
 def _refused(*reasons: str) -> CornerResult:
@@ -315,6 +316,7 @@ def _cascade(
     flag_decisions: dict[str, str],
     eps_coincide: float,
     flagged: set[str],
+    trimmed: set[str],
 ) -> None:
     """ADR-012(b) attachment cascade: truth-table/decision deletions first,
     then transitive fixed-point. A candidate dangles iff it has an
@@ -322,7 +324,9 @@ def _cascade(
     neighbor (contacts at vertices inside removed portions do not count).
     ADR-016(d): eids already flagged by the truth table are SKIPPED (flagged
     classes flow through the flagged flow, never cascade-deleted; one flag
-    per eid per result). Default (absent decision) = delete + flag;
+    per eid per result). ADR-030: a line trimmed to the circle is skipped
+    too — its inside end is about to move, so the old end lying on a
+    removed edge portion is not a dangling line. Default (absent decision) = delete + flag;
     "keep" survives; an INVALID decision is ignored -> pending, never
     auto-deleted (ADR-016(c)), with a warning."""
     adjacency = build_adjacency(primitives, eps_coincide)
@@ -340,6 +344,7 @@ def _cascade(
                 or isinstance(e, PassThrough)
                 or e.eid in flagged
                 or e.eid in cascade_flagged
+                or e.eid in trimmed
             ):
                 continue
             aps = attachment_points(e)
@@ -421,6 +426,49 @@ def _arc_chord_trim(
         pieces.sort(key=piece_key, reverse=True)
     ks, ke = pieces[0]
     return Trim(eid=arc.eid, old=(arc.start_deg, arc.end_deg), new=(ks, ke))
+
+
+def _param_t(a: Pt, b: Pt, p: Pt) -> float | None:
+    """Parameter of p on the infinite line a→b. None for a zero-length line."""
+    d = go.sub(b, a)
+    length2 = d[0] * d[0] + d[1] * d[1]
+    if length2 <= 0.0:
+        return None
+    v = go.sub(p, a)
+    return (v[0] * d[0] + v[1] * d[1]) / length2
+
+
+def _trim_long_line(seg: Seg, center: Pt, r: float, eps: float) -> Trim | None:
+    """Move the inside end of a long line out to the circle.
+
+    One end is inside the disk and the other is outside. The cut is the
+    circle crossing closest to the outside end, so a line that touches the
+    circle, passes through it, and comes out the far side keeps only the
+    outside tail. None when the inside end already lies on the circle and
+    the segment does not pass back through the disk.
+    """
+    a_in = go.in_disk(seg.a, center, r, eps)
+    b_in = go.in_disk(seg.b, center, r, eps)
+    if a_in == b_in:
+        return None
+    t_in = 0.0 if a_in else 1.0
+    t_out = 1.0 if a_in else 0.0
+    best: tuple[float, Pt] | None = None
+    for p in go.line_circle_intersections(seg.a, seg.b, center, r):
+        t = _param_t(seg.a, seg.b, p)
+        if t is None or not (min(t_in, t_out) < t < max(t_in, t_out)):
+            continue
+        rank = abs(t - t_out)
+        if best is None or rank < best[0]:
+            best = (rank, p)
+    if best is None:
+        return None
+    cut = best[1]
+    inside = seg.a if a_in else seg.b
+    if go.dist(inside, cut) <= eps:
+        return None
+    new = (cut, seg.b) if a_in else (seg.a, cut)
+    return Trim(eid=seg.eid, old=(seg.a, seg.b), new=new)
 
 
 def _entity_window_dist(e: Entity, apex: Pt) -> float:
@@ -612,10 +660,20 @@ def _truth_table(ctx: _Ctx) -> Refusal | None:
         ):
             continue
         if isinstance(e, Seg):
-            if go.in_disk(e.a, ctx.center, ctx.r, ctx.eps_coincide) or go.in_disk(
-                e.b, ctx.center, ctx.r, ctx.eps_coincide
-            ):
-                deletions.append(e.eid)
+            a_in = go.in_disk(e.a, ctx.center, ctx.r, ctx.eps_coincide)
+            b_in = go.in_disk(e.b, ctx.center, ctx.r, ctx.eps_coincide)
+            # ADR-030: a line longer than DELETE_MAX_MM with only one end in
+            # the circle is trimmed to the circle. Both ends inside, or a
+            # line at or under the cap, is still deleted whole.
+            if a_in or b_in:
+                if (a_in and b_in) or go.dist(e.a, e.b) <= DELETE_MAX_MM:
+                    deletions.append(e.eid)
+                else:
+                    trimmed = _trim_long_line(
+                        e, ctx.center, ctx.r, ctx.eps_coincide
+                    )
+                    if trimmed is not None:
+                        trims.append(trimmed)
             elif go.seg_min_center_dist(e.a, e.b, ctx.center) < ctx.r - ctx.eps_coincide:
                 decision, _invalid = _validated(e.eid, _OPTS_DELETE_KEEP)
                 flags.append(Flag(e.eid, "CHORD_CROSSER", _OPTS_DELETE_KEEP, decision))
@@ -704,6 +762,7 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
     _cascade(
         ctx.primitives, ctx.deletions, ctx.flags, ctx.warnings, removed_portions,
         ctx.protected, ctx.flag_decisions, ctx.eps_coincide, ctx.flagged,
+        {t.eid for t in ctx.trims},
     )
 
     # -- relief arc (endpoints == rebuilt endpoints; apex strictly mid-arc) --
@@ -746,6 +805,23 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
         edge2_eid=ctx.edge2_eid,
         arc=arc,
     )
+    # ADR-031: designated folds are still never deleted. Trim them to this
+    # relief now, with the same rule export uses, so the working model shows
+    # the cut. A later export finds the ends already on the arc.
+    if ctx.fold_eids:
+        from rules.folds import out_of_reach_warnings, resolve_folds
+
+        reliefs = [dogbone, *ctx.dogbones]
+        already = {t.eid for t in ctx.trims}
+        for trim in resolve_folds(
+            ctx.primitives, reliefs, ctx.fold_eids, ctx.eps_coincide
+        ):
+            if trim.eid not in already:
+                ctx.trims.append(trim)
+        for warning in out_of_reach_warnings(
+            ctx.primitives, reliefs, ctx.fold_eids, ctx.eps_coincide
+        ):
+            ctx.warnings.append(warning)
     return CornerResult(
         ok=True,
         dogbone=dogbone,
