@@ -51,8 +51,8 @@ def test_section_summary_sits_on_the_header():
 
 
 def test_panels_are_ordered_collapsible_sections():
-    """Step 1, Step 2, and Step 3 collapse. Undo/Redo stay in a separate
-    commands strip, so minimizing a section does not hide Redo."""
+    """Dogbone, Folds, and Trim collapse. Undo/Redo stay in a separate
+    commands strip, so minimizing Dogbone does not hide Redo."""
     root = _root()
     try:
         tool = ToolPanel(root)
@@ -90,8 +90,8 @@ def test_app_rail_pins_commands_above_sections():
         app = App(root)
         slaves = list(app.sidebar.body.pack_slaves())
         assert slaves == [
-            app.fold_panel,
             app.panel.dogbone,
+            app.fold_panel,
             app.trim_panel,
         ]
         assert app.panel.commands.master is app.sidebar.pin
@@ -134,8 +134,8 @@ def test_sidebar_wheel_stays_put_when_sections_fit():
 
 
 def test_column_stays_put_until_sections_pass_the_viewport():
-    """The three steps move as one column. The wheel leaves them alone
-    when they fit, and it cannot open a gap above Step 1."""
+    """Dogbone, Folds, and Trim move as one column. The wheel leaves
+    them alone when they fit, and it cannot open a gap above Dogbone."""
     from app import App
 
     root = _root()

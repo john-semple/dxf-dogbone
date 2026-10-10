@@ -39,8 +39,7 @@ class CollapsibleSection(ttk.Frame):
 
         self._title_lbl = tk.Label(
             self.header, text=title, bg=THEME["bg_elevated"], fg=THEME["fg"],
-            font=theme_font(10, "bold"), cursor="hand2",
-            wraplength=140, justify=tk.LEFT, anchor="w")
+            font=theme_font(10, "bold"), cursor="hand2")
         self._title_lbl.pack(side=tk.LEFT)
 
         self._summary = tk.Label(
@@ -93,9 +92,8 @@ class Sidebar(ttk.Frame):
 
     ``pin`` is a strip above the scroller, so widgets packed there stay
     on screen when the sections scroll. ``body`` holds the section
-    column (Step 1 folds, Step 2 dogbone, Step 3 trim). Those sections
-    scroll together, and only when the column is taller than the
-    viewport. The wheel does
+    column (Dogbone, Folds, Trim). Those sections scroll together, and
+    only when the column is taller than the viewport. The wheel does
     nothing when they already fit, and it cannot move the column down
     into blank space. ``on_hover(True/False)`` fires while the pointer
     is over the rail so the app can lend the mouse wheel to this

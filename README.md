@@ -19,10 +19,10 @@ If a Microsoft Store window opens instead of the app, turn off the Store aliases
 ## Use
 
 1. **Open a DXF** (SolidWorks flat pattern). You can also pass a path: `run.bat path\to\part.dxf`.
-2. **Step 1 — Designate Fold Lines.** Mark bend lines if the flat pattern has them. Layers whose names contain `bend`, `fold`, or `centerline` are preselected. You can add or remove lines by clicking. On export they move to a `FOLD_LINES` layer and are trimmed or extended to the dogbone arcs.
-3. **Step 2 — Dogbone.** Set the **tool diameter**. The default is **1/8 in** (3.175 mm). Quick picks are 1/16 in, 1/8 in, and 1/4 in. A trailing `"` on a typed value means inches. Click the **two edges** that meet at the corner. Two ghost dogbones appear. Click the one you want. Anything that will be removed is shown in red before you confirm. **Apply All** writes the queued corners.
-4. **Step 3 — Trim.** Optional. Click a line near the end you want to trim or extend. It snaps to the nearest intersection.
-5. **Export**. The suggested name is `<original>_dogbone.dxf`. Confirm the preview before the file is written.
+2. Set the **tool diameter**. The default is **1/8 in** (3.175 mm). Quick picks are 1/16 in, 1/8 in, and 1/4 in. A trailing `"` on a typed value means inches.
+3. Click the **two edges** that meet at the corner. Two ghost dogbones appear. Click the one you want. Anything that will be removed is shown in red before you confirm.
+4. Mark **fold / bend lines** if the flat pattern has them. Layers whose names contain `bend`, `fold`, or `centerline` are preselected. You can add or remove lines by clicking. On export they move to a `FOLD_LINES` layer and are trimmed or extended to the dogbone arcs.
+5. **Apply**, then **Export**. The suggested name is `<original>_dogbone.dxf`. Confirm the preview before the file is written.
 
 Undo steps back through applied batches. Revert returns to the file as loaded.
 

@@ -218,6 +218,10 @@ rail order is **Step 1 — Designate Fold Lines**, **Step 2 — Dogbone**, **Ste
 title wraps so it stays beside the fold count. Pin strip and scroll behavior are
 unchanged. Presentation only. Recorded on `documentation/briefs/UI-UPGRADE.md`
 ("Revision — 2026-10-09") and in `README.md` Use.
+Follow-up 2026-10-10 (session log `documentation/sessions/2026-10-10-RAIL-ORDER.md`):
+that numbering was reverted. Rail order is Dogbone, Folds, Trim. Titles are
+`Dogbone`, `Folds`, and `Trim`. Pin strip and scroll behavior are unchanged.
+Recorded on `documentation/briefs/UI-UPGRADE.md` ("Revision — 2026-10-10").
 
 ### ISSUE-022 (done) — Flag prompt is a card at the pointer
 User request 2026-10-08: the centered Yes/No box for a chord-crosser did not show which line it meant. Executed the same day (session log `documentation/sessions/2026-10-08-CHORD-PROMPT.md`, which is the behavior spec). Every interactive flag uses that card. One thick orange highlight marks the entity under the question. One line of copy sits above Delete and Keep, with an `{n}/{m}` count at the top right. Delete sits on the ghost-click pointer; Keep is beside it. If that spot would cover the relief circle, the card steps aside. The zoom is not panned. Chord-crossers are asked first, then the other reasons, on that same pinned spot. Confirm replaces the card there, with no blank text line and no count. The card window does not take the click; the canvas under it does, so Confirm accepts the next click without a pause and without moving the pointer. The button under that pointer is already the lighter grey when the card is drawn. A double-click on the last Delete also confirms. Harness path `_prompt_pending_flags` is unchanged. Sticky decisions and the confirm-gate are unchanged. SPEC §11.5 points here.

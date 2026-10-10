@@ -242,7 +242,7 @@ Under that, add a checkbox for each layer in the file.
 - Mixed layer (some of its lines designated, some not): show the box unchecked, and do not change `fold_eids` until the user clicks it. A click from that state designates all of the layer's straight lines. The next click clears them.
 - After a manual fold click, undo, redo, or revert, refresh the checks from `fold_eids` (`on_model_change` already runs on undo/redo/revert).
 - User edits still win over a second automatic pass. Do not call `auto_preselect` again on undo. The existing once-per-load tests stay true.
-- A long list scrolls with the rail when the column is taller than the viewport. `Sidebar` already scrolls Step 1 (folds), Step 2 (dogbone), and Step 3 (trim) together in that case. Do not add a new window.
+- A long list scrolls with the rail when the column is taller than the viewport. `Sidebar` already scrolls Dogbone, Folds, and Trim together in that case. Do not add a new window.
 
 `test_fold_fsm_auto_preselect_custom_patterns` calls `auto_preselect` with an explicit pattern tuple. Leave that function able to take patterns. Update `test_fold_panel_default_patterns` so it still finds the entry, the default text `bend, fold, centerline`, and the new label.
 

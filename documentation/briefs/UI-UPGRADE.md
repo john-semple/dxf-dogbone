@@ -47,8 +47,8 @@ User request 2026-10-07 (session log of the M3 pass or this pass, whichever reco
 The palette, canvas, and status bar from this brief are unchanged. The shell gained a left rail the same day (session log `documentation/sessions/2026-10-08-UI-SECTIONS.md`, ISSUE-021). Current layout:
 
 - **Pinned strip** at the top of the rail, above the scroller. It does not collapse and does not scroll away. Undo and Redo are normal buttons, side by side. **Revert to Original** sits under them as `Quiet.TButton` (muted text, no filled chip), **left-aligned** with the other labels in the rail. It is not centered: the gap between Undo and Redo is where the eye lands, and centering a rare destructive command there would give it the weight of a third button.
-- **Collapsible sections** below a separator, in order: **Step 1 — Designate Fold Lines**, **Step 2 — Dogbone**, **Step 3 — Trim** (titles updated 2026-10-09; see the revision below). They are one column. A header click minimizes that section. A minimized header keeps a short summary (tool diameter and queued count, fold `n/m`, trim `on`).
-- The column scrolls only when it is taller than the rail, for example when the sections are expanded or the fold-layer list is long. The three sections move together. When they already fit, the wheel does nothing, and the column cannot be shifted down into blank space above Step 1. While the pointer is over the rail and the column does overflow, the wheel scrolls the sections instead of zooming the drawing.
+- **Collapsible sections** below a separator, in order: Dogbone, Folds, Trim. They are one column. A header click minimizes that section. A minimized header keeps a short summary (tool diameter and queued count, fold `n/m`, trim `on`).
+- The column scrolls only when it is taller than the rail, for example when the sections are expanded or the fold-layer list is long. Dogbone, Folds, and Trim move together. When they already fit, the wheel does nothing, and the column cannot be shifted down into blank space above Dogbone. While the pointer is over the rail and the column does overflow, the wheel scrolls the sections instead of zooming the drawing.
 - Under **Trim to Closest**, a muted line reads: "Click a line near the end you want to trim or extend. Ctrl+Z undoes." The string is `TRIM_HINT` in `ui/messages.py`.
 
 ## Revision — 2026-10-08 (File bar)
@@ -66,11 +66,9 @@ With no DXF loaded, the canvas is not a menu instruction. A centered hint (`EMPT
 
 ## Revision — 2026-10-09 (step order)
 
-The three collapsible sections are a numbered workflow. Titles live in `ui/messages.py`:
+Superseded 2026-10-10. For one day the sections were titled Step 1 — Designate Fold Lines, Step 2 — Dogbone, and Step 3 — Trim, with folds packed first. Session log `documentation/sessions/2026-10-09-RAIL-STEPS.md`.
 
-- **Step 1 — Designate Fold Lines** (`SECTION_FOLDS`), packed first
-- **Step 2 — Dogbone** (`SECTION_DOGBONE`)
-- **Step 3 — Trim** (`SECTION_TRIM`)
+## Revision — 2026-10-10 (rail order restored)
 
-The Step 1 title wraps (`wraplength=140` on the section header) so it stays beside the fold count. Undo, Redo, and Revert stay on the pinned strip. Scroll behavior is unchanged. No extra process paragraph was added to the panels; Step 3 still has `TRIM_HINT`, and Step 1 still has the keyword and layer hints. Session log `documentation/sessions/2026-10-09-RAIL-STEPS.md`.
+The numbered titles are gone. Order in the rail is Dogbone, Folds, Trim again. Titles are `Dogbone`, `Folds`, and `Trim`. The header title no longer wraps. Undo, Redo, and Revert stay on the pinned strip. Session log `documentation/sessions/2026-10-10-RAIL-ORDER.md`.
 

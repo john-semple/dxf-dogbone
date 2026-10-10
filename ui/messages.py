@@ -60,11 +60,10 @@ BTN_UNDO = "Undo"
 BTN_REDO = "Redo"
 BTN_REVERT = "Revert to Original"
 # Left-rail section titles (collapsible). Order in the shell is
-# Step 1 folds, Step 2 dogbone, Step 3 trim.
-# Undo/Redo/Revert are pinned above them.
-SECTION_FOLDS = "Step 1 — Designate Fold Lines"
-SECTION_DOGBONE = "Step 2 — Dogbone"
-SECTION_TRIM = "Step 3 — Trim"
+# Dogbone, Folds, Trim. Undo/Redo/Revert are pinned above them.
+SECTION_DOGBONE = "Dogbone"
+SECTION_FOLDS = "Folds"
+SECTION_TRIM = "Trim"
 SECTION_MODE_ON = "on"
 PANEL_TITLE = SECTION_DOGBONE
 LABEL_DIAMETER = "Tool diameter:"
