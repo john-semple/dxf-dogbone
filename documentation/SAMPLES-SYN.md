@@ -75,8 +75,8 @@ Census: CIRCLE=1, LINE=8, MTEXT=1
 
 | site | air-V° | center | outcome |
 |---|---|---|---|
-| (60.0, 60.0) | 90.0 | (58.877468, 61.122532) | placeable; CIRCLE+MTEXT flagged |
-| (40.0, 60.0) | 90.0 | (41.122532, 61.122532) | placeable; CIRCLE+MTEXT flagged |
+| (60.0, 60.0) | 90.0 | (58.877468, 61.122532) | placeable; MTEXT flagged (CIRCLE in-window but clear of relief — ISSUE-026) |
+| (40.0, 60.0) | 90.0 | (41.122532, 61.122532) | placeable; MTEXT flagged (CIRCLE in-window but clear of relief — ISSUE-026) |
 
 ## syn-fold-heavy.dxf
 

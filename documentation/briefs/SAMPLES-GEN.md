@@ -48,11 +48,11 @@ Sites (4, machine-detected, half 45° each): **(20,57)** air SW (center 18.8775,
 Key property: slot-mouth dogbones at (60,57) and (80,57) both consume the shared bar segment (60,57)-(80,57) ⇒ ADR-012(c) re-promotion. Center gap = **17.755 > 2R**; overlap silent.
 Plus one fold, layer `BEND_UP`: LINE (10,100) → (190,100). Distance from fold to nearest dogbone center = **44.12 > 12.7** window ⇒ untouched. (`BEND_UP` matches auto-detect `bend`.)
 
-### 6. `syn-near-hole.dxf` — flagged-CIRCLE flow (ADR-009/013)
+### 6. `syn-near-hole.dxf` — near-hole CIRCLE negative + MTEXT flag (ADR-009/013; ISSUE-026)
 Plate with top slot (CCW): (0,0) → (100,0) → (100,100) → (60,100) → (60,60) → (40,60) → (40,100) → (0,100) → close.
 Sites (2, machine-detected): slot-floor corners **(60,60)** air NW (center 58.8775, 61.1225) and **(40,60)** air NE (center 41.1225, 61.1225) — half 45° each. Rim vertices (60,100)/(40,100) are convex (turn +90°) — NOT sites; script asserts site count exactly 2.
 Extras: CIRCLE center (50,54) r=1.25; MTEXT "NOTES" at (42,58) height 2.
-Distances (assert): hole center → site (40,60) = **11.662** < 12.7 (4× Ø) window ⇒ flag triggers at that corner; 11.662 > 1.5875 + 1.25 = 2.84 ⇒ kept hole cannot intersect the dogbone circle. MTEXT (42,58) → (40,60) = **2.828** < 12.7 ⇒ flagged; ≥ R ⇒ intersect-safe keep. Center gap between the two dogbones = **17.755 > 2R** ⇒ overlap silent.
+Distances (assert): hole center → site (40,60) = **11.662** < 12.7 (4× Ø) window **and** 11.662 > 1.5875 + 1.25 = 2.84 ⇒ hole is in-window but **does not** intersect the relief → **CIRCLE not flagged** (ISSUE-026). MTEXT (42,58) → (40,60) = **2.828** < 12.7 ⇒ still window-flagged; ≥ R ⇒ intersect-safe keep. Center gap between the two dogbones = **17.755 > 2R** ⇒ overlap silent.
 
 ### 7. `syn-fold-heavy.dxf` — auto-detect + §11.3 case-5 collinear warning
 Plate (CCW): (0,0) → (180,0) → (180,90) → (20,90) → (20,60) → (0,60) → close.

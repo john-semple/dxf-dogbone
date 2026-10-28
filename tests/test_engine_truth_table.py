@@ -180,7 +180,9 @@ def test_engine_truth_table_arc_chord_crosser_trim_option():
     assert "achord" in res3.deletions
 
 
-def test_engine_truth_table_circle_and_mtext_always_flagged():
+def test_engine_truth_table_intersecting_circle_and_mtext_flagged():
+    """ISSUE-026: CIRCLE flagged only when it overlaps the relief disk;
+    MTEXT still window-flagged. Intersecting hole at (2,-2) r=0.5."""
     hole = Circ("hole", Pt(2.0, -2.0), 0.5)
     note = TextEnt("mtext", Pt(3.0, -3.0), "NOTES")
     res = place(base_prims([hole, note]))
@@ -193,6 +195,38 @@ def test_engine_truth_table_circle_and_mtext_always_flagged():
     # scripted delete honored for both
     res2 = place(base_prims([hole, note]), flag_decisions={"hole": "delete", "mtext": "delete"})
     assert "hole" in res2.deletions and "mtext" in res2.deletions
+
+
+def test_engine_truth_table_nearby_circle_not_flagged():
+    """ISSUE-026: mounting hole inside the 4× window but clear of the
+    relief disk must not raise CIRCLE_IN_WINDOW (J5 false-positive class)."""
+    # Window = 12.7; rim-to-apex ~5–6 still in window. Gap to relief disk > 0.
+    near = Circ("near", Pt(8.0, -8.0), 1.0)
+    assert go.dist(near.center, C_CENTER) - R - near.r > 1.0
+    # rim distance from apex (0,0): |c| - r ≈ 10.3 < 12.7 → would have been
+    # window-flagged under the old rule
+    apex = Pt(0.0, 0.0)
+    assert abs(go.dist(near.center, apex) - near.r) < 12.7
+    res = place(base_prims([near]))
+    assert res.ok
+    assert not any(f.eid == "near" for f in res.flags)
+    assert "near" not in res.deletions
+    # sticky delete is inert when the circle is not flagged
+    res2 = place(base_prims([near]), flag_decisions={"near": "delete"})
+    assert "near" not in res2.deletions
+
+
+def test_engine_truth_table_tangent_circle_not_flagged():
+    """Pure tangency is not beyond-tangency overlap — do not flag."""
+    # Place hole center so dist(C_CENTER, hole) == R + hole.r exactly
+    hole_r = 0.5
+    # direction from C_CENTER toward (+1,0)
+    d = R + hole_r
+    hole = Circ("tan", Pt(C_CENTER.x + d, C_CENTER.y), hole_r)
+    assert abs(go.dist(hole.center, C_CENTER) - (R + hole_r)) < 1e-9
+    res = place(base_prims([hole]))
+    assert res.ok
+    assert not any(f.eid == "tan" for f in res.flags)
 
 
 def test_engine_truth_table_protected_fold_exempt_and_fold_stub():

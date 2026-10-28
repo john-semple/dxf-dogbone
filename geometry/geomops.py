@@ -140,6 +140,101 @@ def in_disk(p, c, r: float, eps: float) -> bool:
     return dist(p, c) <= r + eps
 
 
+def in_capsule(
+    p,
+    apex,
+    center,
+    r: float,
+    u_hat: tuple[float, float],
+    q_depth: float,
+    eps: float,
+) -> bool:
+    """ADR-032 stadium: disk(center, r) ∪ throat rectangle between parallel walls.
+
+    Frame origin at ``apex``, ``u_hat`` = unit bisector into air. Throat slab
+    is ``u ∈ [min(r, q_depth), max(r, q_depth)]`` with ``|v| ≤ r`` (``v`` along
+    the +90° perp of ``u_hat``). ``q_depth = R / tan(α)`` for half-side α.
+    """
+    if in_disk(p, center, r, eps):
+        return True
+    v_hat = (-u_hat[1], u_hat[0])
+    d = sub(p, apex)
+    u_coord = d[0] * u_hat[0] + d[1] * u_hat[1]
+    v_coord = d[0] * v_hat[0] + d[1] * v_hat[1]
+    lo, hi = (r, q_depth) if r <= q_depth else (q_depth, r)
+    return lo - eps <= u_coord <= hi + eps and abs(v_coord) <= r + eps
+
+
+def disks_overlap_beyond_tangency(c1, r1: float, c2, r2: float, eps: float) -> bool:
+    """True iff two closed disks overlap strictly beyond tangency (±eps)."""
+    return dist(c1, c2) < r1 + r2 - eps
+
+
+def circle_hits_capsule(
+    hole_c,
+    hole_r: float,
+    apex,
+    center,
+    r: float,
+    u_hat: tuple[float, float],
+    q_depth: float,
+    eps: float,
+) -> bool:
+    """True iff CIRCLE(hole_c, hole_r) overlaps the ADR-032 capsule beyond tangency.
+
+    Capsule = disk(center, r) ∪ throat rectangle. Used by ISSUE-026 CIRCLE flag
+    raise and KEPT_INTERSECTS (same predicate).
+    """
+    if disks_overlap_beyond_tangency(hole_c, hole_r, center, r, eps):
+        return True
+    v_hat = (-u_hat[1], u_hat[0])
+    d = sub(hole_c, apex)
+    u0 = d[0] * u_hat[0] + d[1] * u_hat[1]
+    v0 = d[0] * v_hat[0] + d[1] * v_hat[1]
+    lo, hi = (r, q_depth) if r <= q_depth else (q_depth, r)
+    uc = min(max(u0, lo), hi)
+    vc = min(max(v0, -r), r)
+    ax, ay = _xy(apex)
+    closest = Pt(ax + uc * u_hat[0] + vc * v_hat[0], ay + uc * u_hat[1] + vc * v_hat[1])
+    return dist(hole_c, closest) < hole_r - eps
+
+
+def seg_hits_capsule_interior(
+    a,
+    b,
+    apex,
+    center,
+    r: float,
+    u_hat: tuple[float, float],
+    q_depth: float,
+    eps: float,
+) -> bool:
+    """True if the OPEN interior of segment a-b enters the open capsule."""
+    if seg_min_center_dist(a, b, center) < r - eps:
+        return True
+    # Sample densifies the throat slab check (analytic strip∩seg would be
+    # longer; endpoints-on-boundary do not count as interior hits).
+    ax, ay = _xy(a)
+    bx, by = _xy(b)
+    for i in range(1, 32):
+        t = i / 32.0
+        pt = Pt(ax + t * (bx - ax), ay + t * (by - ay))
+        if in_disk(pt, center, r - eps, 0.0):
+            return True
+        if in_capsule(pt, apex, center, r, u_hat, q_depth, 0.0) and not in_disk(
+            pt, center, r + eps, 0.0
+        ):
+            # strictly inside throat rectangle (not merely on wall)
+            v_hat = (-u_hat[1], u_hat[0])
+            d = sub(pt, apex)
+            u_coord = d[0] * u_hat[0] + d[1] * u_hat[1]
+            v_coord = d[0] * v_hat[0] + d[1] * v_hat[1]
+            lo, hi = (r, q_depth) if r <= q_depth else (q_depth, r)
+            if lo + eps < u_coord < hi - eps and abs(v_coord) < r - eps:
+                return True
+    return False
+
+
 def pt_angle_deg(c, p) -> float:
     """CCW angle of p seen from c, normalized to [0, 360)."""
     cx, cy = _xy(c)

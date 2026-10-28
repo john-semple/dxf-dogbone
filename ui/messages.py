@@ -26,6 +26,10 @@ STATUS_GHOSTS = (
     "Click a ghost preview to choose the dogbone side. Press Esc to cancel."
 )
 STATUS_PREVIEW = "Review the deletion preview, then Confirm or press Esc to restart."
+STATUS_PREVIEW_WIDENED = (
+    "Entry widened to bit diameter (mouth was too tight). "
+    "Review the deletion preview, then Confirm or press Esc to restart."
+)
 
 # -- flash / restart ---------------------------------------------------------
 PROMOTED_FLASH = "Edge promoted: {eid}"
@@ -103,7 +107,7 @@ FLAG_CARD_COUNT = "{n}/{m}"
 FLAG_CARD_BODY = {
     "CHORD_CROSSER": CHORD_CARD_BODY,
     "CASCADE_DANGLING": "This {kind} is no longer attached to the part.",
-    "CIRCLE_IN_WINDOW": "This circle lies in the relief.",
+    "CIRCLE_IN_WINDOW": "This circle intersects the relief.",
     "MTEXT_IN_WINDOW": "This note lies in the relief.",
     "ARC_ENDPOINT_IN": "This arc ends inside the relief.",
 }

@@ -50,7 +50,8 @@ class Model:
           ADR-012(c); no member eid referenced twice),
         - execute deletions and trims,
         - mint the placed arc eid via next_seq (ADR-015(c)), insert the Arc,
-          append the Dogbone re-recorded with the minted eid,
+          and when ADR-032 throat is present mint both throat LINE eids,
+          append the Dogbone re-recorded with the minted eids (one snapshot),
         - persist scripted flag decisions (ADR-009/013 sticky).
         """
         if not res.ok or res.dogbone is None:
@@ -169,8 +170,18 @@ class Model:
         st.next_seq += 1
         placed = replace(db.arc, eid=arc_eid)
         out.append(placed)
+        placed_throat = None
+        if db.throat is not None:
+            minted: list[Seg] = []
+            for th in db.throat:
+                teid = f"n{st.next_seq}"
+                st.next_seq += 1
+                m = replace(th, eid=teid)
+                out.append(m)
+                minted.append(m)
+            placed_throat = (minted[0], minted[1])
         st.primitives = out
-        st.dogbones.append(replace(db, arc=placed))
+        st.dogbones.append(replace(db, arc=placed, throat=placed_throat))
 
         for f in res.flags:
             if f.decision is not None:

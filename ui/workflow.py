@@ -274,7 +274,14 @@ class WorkflowFSM:
         self.preview = res
         self.refusals = list(res.refusals)
         self.state = WorkflowState.SIDE_PICKED
-        self.status = msg.STATUS_PREVIEW
+        if (
+            res.ok
+            and res.dogbone is not None
+            and res.dogbone.throat is not None
+        ):
+            self.status = msg.STATUS_PREVIEW_WIDENED
+        else:
+            self.status = msg.STATUS_PREVIEW
         self.inline = None
 
     def recompute(self) -> None:
@@ -1158,6 +1165,15 @@ class WorkflowUI:
         if pts:
             c.create_line(*pts, fill=GHOST_COLOR, width=2,
                           tags=(self.GHOST_TAG,))
+        # ADR-032: draw parallel throat walls when entry-widened
+        if db.throat is not None:
+            for th in db.throat:
+                x1, y1 = t.to_screen(th.a)
+                x2, y2 = t.to_screen(th.b)
+                c.create_line(
+                    x1, y1, x2, y2,
+                    fill=GHOST_COLOR, width=2, tags=(self.GHOST_TAG,),
+                )
 
     # ------------------------------------------------------------- autozoom
     def _auto_zoom(self) -> None:

@@ -61,7 +61,10 @@ class Dogbone:
     side: Side        # enum: LEFT_OF_EDGE1_AB | RIGHT_OF_EDGE1_AB (ghost-pick result)
     edge1_eid: str
     edge2_eid: str
-    arc: Arc          # the replacement arc; endpoints == rebuilt edge endpoints
+    arc: Arc          # classic: endpoints == rebuilt; widened: undercut semicircle (through apex) endpoints == throat t_i
+    throat: tuple[Seg, Seg] | None = None
+                      # ADR-032: None = classic; both throat LINEs (q_i→t_i) when entry-widened.
+                      # Pending eids "throat-pending-<db_id>-1/2"; Model.apply_corner mints n<seq>.
 
 @dataclass(frozen=True)
 class Side:
@@ -72,7 +75,7 @@ class Side:
 class Rebuild:            # one edge endpoint moved by a placement (ADR-003 ops; member eids per ADR-012)
     eid: str              # member (or composite) eid whose endpoint moved
     old: Pt
-    new: Pt               # == arc endpoint after rebuild
+    new: Pt               # classic: == arc endpoint; widened (ADR-032): == throat junction q_i
 
 @dataclass(frozen=True)
 class Trim:               # endpoint repositioned without deletion (strays, folds, flag-trim)
@@ -87,7 +90,8 @@ class Refusal:            # ADR-015(a): the type CONTRACTS §2 references but ne
 @dataclass(frozen=True)
 class Flag:               # ADR-009/013: explicit-user-decision entity
     eid: str
-    reason: str           # "CIRCLE_IN_WINDOW" | "MTEXT_IN_WINDOW" | "ARC_ENDPOINT_IN" | "CHORD_CROSSER" | "CASCADE_DANGLING"
+    reason: str           # "CIRCLE_IN_WINDOW" (legacy name: means CIRCLE intersects relief, ISSUE-026)
+                          # | "MTEXT_IN_WINDOW" | "ARC_ENDPOINT_IN" | "CHORD_CROSSER" | "CASCADE_DANGLING"
     options: frozenset    # subset of {"delete","keep","trim"} — allowed outcomes for this case
     decision: str | None  # None while pending; else "delete"|"keep"|"trim"; sticky per session
 
@@ -182,21 +186,30 @@ def place_corner(primitives: list[Entity], edge1_eid: str, edge2_eid: str, side:
                  # unified as "UNKNOWN_EDGE: <eid> is not resolvable in primitives"; flag_decisions
                  # validated per-case against Flag.options (invalid -> pending/default + warning).
                  # M2.2 (decomposition, no signature change): pipeline stages are
-                 # _validate_inputs -> _truth_table -> _rebuild_and_arc over an internal
-                 # _Ctx dataclass (radius/edges/gate/bisector; rows+flags+warnings+flagged;
-                 # rebuild uniqueness/cascade/span identity/assembly) — public API and all
-                 # refusal/warning strings byte-identical.
+                 # _validate_inputs -> _plan_relief -> _truth_table -> _rebuild_and_arc over an
+                 # internal _Ctx dataclass — public API and all refusal/warning strings byte-identical
+                 # for the classic path.
+                 # ADR-032 entry widen: after classic p1/p2, if mouth |p1−p2| < 2R − EPS_COINCIDE and
+                 # both edges host q_i = apex + (R/sin α)·ê on the promoted run extent, propose
+                 # parallel throat (walls // bisector at ±R, rebuild to q_i, insert throat LINEs
+                 # q→t, undercut semicircle 180° through apex). Not hostable → classic + warning ENTRY_WIDEN_HOST.
+                 # Widened: Dogbone.throat set; deletions use capsule (disk ∪ throat rectangle);
+                 # folds resolve against final contour (arc + throat segs); throat-vs-protected
+                 # overlap refuses THROAT_OVERLAP. Pending throat eids throat-pending-<db_id>-{1,2};
+                 # apply mints both with the arc in one snapshot.
                  # full rule pipeline, in order: radius validation -> apex gate -> overlap vs existing dogbones ->
-                 # circle construction → deletion truth table (SPEC §11.5; ADR-030: an undesignated
-                 # LINE longer than 3 mm with only one end inside the circle is trimmed to the
-                 # circle instead of deleted. Both ends inside, or length ≤ 3 mm, still deletes.
-                 # A longer line whose end already lies on the circle and whose body stays outside
-                 # is left unchanged. Designated folds are never deleted; place_corner trims them
-                 # to the relief arc with the export rule (ADR-031).) → edge rebuild (ADR-003 ops:
-                 # rebuilt endpoint = UNIQUE NON-APEX intersection of the edge's supporting line with the
-                 # dogbone circle; refusals: line tangent to circle; post-rebuild opposite endpoint not
-                 # on the far side of the rebuilt point (segment no longer spans)) → fold interaction stubs
-                 # (extend/trim runs at export; here only compute fold-vs-circle intersections for preview)
+                 # circle construction → entry-widen plan (ADR-032) → deletion truth table (SPEC §11.5;
+                 # capsule when widened; ADR-030: an undesignated LINE longer than 3 mm with only one
+                 # end inside the relief is trimmed to the relief boundary instead of deleted. Both
+                 # ends inside, or length ≤ 3 mm, still deletes. A longer line whose end already lies
+                 # on the boundary and whose body stays outside is left unchanged. Designated folds
+                 # are never deleted; place_corner trims them to the final relief contour with the
+                 # export rule (ADR-031 / ADR-032). ISSUE-026/ADR-002: CIRCLE flagged iff it
+                 # intersects the removed region beyond tangency (disk / capsule); 4× window is not
+                 # a CIRCLE prefilter. MTEXT still window-flagged. KEPT_INTERSECTS shares that
+                 # predicate.) → edge rebuild (ADR-003 ops; classic: UNIQUE
+                 # NON-APEX line∩circle; widened: retarget to q_i) → fold interaction
+                 # (extend/trim to arc and/or throat first-hit)
 
 def promoted_edge_at(primitives: list[Entity], p_world: Pt, eps_pick: float,
                      eps_coincide: float) -> Seg | None

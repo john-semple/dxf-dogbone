@@ -1,10 +1,9 @@
 """Corner pipeline — CONTRACTS §2 engine API (headless; geometry imports only).
 
 Pipeline (CONTRACTS §2 order): apex gate -> overlap vs existing dogbones ->
-circle construction -> deletion truth table (SPEC §11.5) -> edge rebuild
-(ADR-003 ops; §11.4 uniqueness post-condition) -> attachment cascade
-(ADR-012(b)) -> fold-vs-circle preview stub (fold extend/trim itself runs at
-export, M5/M6).
+circle construction -> entry-widen plan (ADR-032) -> deletion truth table
+(SPEC §11.5; capsule when widened) -> edge rebuild (ADR-003 / ADR-032) ->
+attachment cascade (ADR-012(b)) -> fold resolve against final contour.
 
 Conventions per ADR-015: compute_apex returns half of the SMALLER supporting-
 line angle; Side selects the bisector CONSTRUCTION (CONTRACTS §1: +1 =
@@ -47,6 +46,14 @@ HALF_ANGLE_MIN_DEG = 15.0  # SPEC §11.4 band (constants, tunable)
 HALF_ANGLE_MAX_DEG = 165.0
 WINDOW_FACTOR = 4.0  # SPEC §11.5: 4x tool DIAMETER window (prefilter only)
 DELETE_MAX_MM = 3.0  # ADR-030: longer undesignated lines are trimmed, not deleted
+
+# ADR-032 pinned strings (asserted by tests)
+ENTRY_WIDENED = (
+    "ENTRY_WIDENED: Entry widened to bit diameter (mouth was too tight)"
+)
+ENTRY_WIDEN_HOST = (
+    "ENTRY_WIDEN_HOST: edge too short for parallel throat; using classic dogbone"
+)
 
 
 def _refused(*reasons: str) -> CornerResult:
@@ -451,10 +458,23 @@ def _trim_long_line(seg: Seg, center: Pt, r: float, eps: float) -> Trim | None:
     b_in = go.in_disk(seg.b, center, r, eps)
     if a_in == b_in:
         return None
+    return _trim_to_cuts(
+        seg,
+        a_in,
+        go.line_circle_intersections(seg.a, seg.b, center, r),
+        eps,
+    )
+
+
+def _trim_to_cuts(
+    seg: Seg, a_in: bool, cuts: list[Pt], eps: float
+) -> Trim | None:
+    """Shared ADR-030 trim: move the inside end to the cut closest to the
+    outside end among ``cuts`` that lie between the two ends."""
     t_in = 0.0 if a_in else 1.0
     t_out = 1.0 if a_in else 0.0
     best: tuple[float, Pt] | None = None
-    for p in go.line_circle_intersections(seg.a, seg.b, center, r):
+    for p in cuts:
         t = _param_t(seg.a, seg.b, p)
         if t is None or not (min(t_in, t_out) < t < max(t_in, t_out)):
             continue
@@ -469,6 +489,31 @@ def _trim_long_line(seg: Seg, center: Pt, r: float, eps: float) -> Trim | None:
         return None
     new = (cut, seg.b) if a_in else (seg.a, cut)
     return Trim(eid=seg.eid, old=(seg.a, seg.b), new=new)
+
+
+def _trim_long_line_capsule(
+    seg: Seg,
+    apex: Pt,
+    center: Pt,
+    r: float,
+    u_hat: tuple[float, float],
+    q_depth: float,
+    throat_segs: tuple[Seg, Seg],
+    eps: float,
+) -> Trim | None:
+    """ADR-030 under capsule: trim to circle and/or throat-wall crossings."""
+    a_in = go.in_capsule(seg.a, apex, center, r, u_hat, q_depth, eps)
+    b_in = go.in_capsule(seg.b, apex, center, r, u_hat, q_depth, eps)
+    if a_in == b_in:
+        return None
+    cuts = list(go.line_circle_intersections(seg.a, seg.b, center, r))
+    for th in throat_segs:
+        ip = go.line_intersection(seg.a, seg.b, th.a, th.b, eps)
+        if ip is None:
+            continue
+        if go.point_seg_dist(ip, th.a, th.b) <= eps:
+            cuts.append(ip)
+    return _trim_to_cuts(seg, a_in, cuts, eps)
 
 
 def _entity_window_dist(e: Entity, apex: Pt) -> float:
@@ -517,6 +562,15 @@ class _Ctx:
     apex: Pt | None = None
     center: Pt | None = None
     half_side: float = 0.0
+    u_hat: tuple[float, float] = (1.0, 0.0)
+    # filled by _plan_relief (ADR-032):
+    widen: bool = False
+    q1: Pt | None = None
+    q2: Pt | None = None
+    t1: Pt | None = None
+    t2: Pt | None = None
+    q_depth: float = 0.0
+    throat_pending: tuple[Seg, Seg] | None = None
     # filled by _truth_table:
     protected: set[str] = field(default_factory=set)
     deletions: list[str] = field(default_factory=list)
@@ -568,6 +622,7 @@ def _validate_inputs(ctx: _Ctx) -> Refusal | None:
             "PARALLEL: edges are parallel or collinear (no supporting-line intersection)"
         )
     b = (ctx.side_flip * b[0], ctx.side_flip * b[1])
+    ctx.u_hat = b
     ctx.center = Pt(ctx.apex.x + ctx.r * b[0], ctx.apex.y + ctx.r * b[1])
 
     for db in ctx.dogbones:
@@ -591,6 +646,148 @@ def _validate_inputs(ctx: _Ctx) -> Refusal | None:
     return None
 
 
+def _dir_from_apex(run: Seg, apex: Pt) -> tuple[float, float]:
+    """Unit direction along the supporting line from apex toward the run body."""
+    far = run.a if go.dist(run.a, apex) >= go.dist(run.b, apex) else run.b
+    d = go.sub(far, apex)
+    if d[0] == 0.0 and d[1] == 0.0:
+        # apex coincides with the far end — fall back to run direction
+        return _dir(run)
+    return go.unit(d)
+
+
+def _on_run_extent(p: Pt, run: Seg, eps: float) -> bool:
+    """True iff p lies on the finite run segment (hostable gate)."""
+    return go.point_seg_dist(p, run.a, run.b) <= eps
+
+
+def _seg_hits_arc(seg: Seg, arc: Arc, eps: float) -> bool:
+    """True if segment comes within eps of a point on the arc span."""
+    xs = go.line_circle_intersections(seg.a, seg.b, arc.center, arc.r)
+    for p in xs:
+        if go.point_seg_dist(p, seg.a, seg.b) > eps:
+            continue
+        ang = go.pt_angle_deg(arc.center, p)
+        if go.span_contains(arc.start_deg, arc.end_deg, ang, eps):
+            return True
+    # also near-miss: min dist from arc samples is overkill; endpoints on arc
+    for end in (seg.a, seg.b):
+        if abs(go.dist(end, arc.center) - arc.r) <= eps:
+            ang = go.pt_angle_deg(arc.center, end)
+            if go.span_contains(arc.start_deg, arc.end_deg, ang, eps):
+                return True
+    return False
+
+
+def _seg_hits_seg(a: Seg, b: Seg, eps: float) -> bool:
+    ip = go.line_intersection(a.a, a.b, b.a, b.b, eps)
+    if ip is not None:
+        if go.point_seg_dist(ip, a.a, a.b) <= eps and go.point_seg_dist(ip, b.a, b.b) <= eps:
+            return True
+    # collinear overlap / endpoint touch
+    for p in (a.a, a.b):
+        if go.point_seg_dist(p, b.a, b.b) <= eps:
+            return True
+    for p in (b.a, b.b):
+        if go.point_seg_dist(p, a.a, a.b) <= eps:
+            return True
+    return False
+
+
+def _throat_overlap_reason(
+    throat: tuple[Seg, Seg],
+    primitives: list[Entity],
+    dogbones: list[Dogbone],
+    eps: float,
+) -> str | None:
+    for db in dogbones:
+        for th in throat:
+            if _seg_hits_arc(th, db.arc, eps):
+                return (
+                    f"THROAT_OVERLAP: throat segment intersects protected "
+                    f"geometry of dogbone {db.db_id}"
+                )
+            if db.throat is not None:
+                for other in db.throat:
+                    if _seg_hits_seg(th, other, eps):
+                        return (
+                            f"THROAT_OVERLAP: throat segment intersects protected "
+                            f"geometry of dogbone {db.db_id}"
+                        )
+            for edge_eid in (db.edge1_eid, db.edge2_eid):
+                rr = resolve_edge(primitives, edge_eid, eps)
+                if rr is not None and _seg_hits_seg(th, rr[0], eps):
+                    return (
+                        f"THROAT_OVERLAP: throat segment intersects protected "
+                        f"geometry of dogbone {db.db_id}"
+                    )
+    return None
+
+
+def _plan_relief(ctx: _Ctx) -> Refusal | None:
+    """Stage 1b (ADR-032): classic mouth gate + hostable throat plan.
+
+    Always computes classic p1/p2. When mouth < 2R − eps and both edges can
+    host q_i on the promoted run, sets widen + throat junctions; otherwise
+    classic (with ENTRY_WIDEN_HOST if mouth was tight but not hostable).
+    """
+    assert ctx.apex is not None and ctx.center is not None
+    assert ctx.run1 is not None and ctx.run2 is not None
+    apex, center, r = ctx.apex, ctx.center, ctx.r
+    eps = ctx.eps_coincide
+    # classic non-apex hits (mouth)
+    p1s = go.line_circle_intersections(ctx.run1.a, ctx.run1.b, center, r)
+    p2s = go.line_circle_intersections(ctx.run2.a, ctx.run2.b, center, r)
+    if len(p1s) < 2 or len(p2s) < 2:
+        # tangent — leave to rebuild refusal
+        return None
+    p1 = max(p1s, key=lambda q: go.dist(q, apex))
+    p2 = max(p2s, key=lambda q: go.dist(q, apex))
+    mouth = go.dist(p1, p2)
+    if mouth >= 2.0 * r - eps:
+        return None  # classic 90°+ stays classic
+
+    alpha = math.radians(ctx.half_side)
+    sin_a = math.sin(alpha)
+    if sin_a <= 1e-15:
+        return None
+    s = r / sin_a
+    ctx.q_depth = r / math.tan(alpha) if math.tan(alpha) > 1e-15 else s
+
+    e1 = _dir_from_apex(ctx.run1, apex)
+    e2 = _dir_from_apex(ctx.run2, apex)
+    q1 = Pt(apex.x + s * e1[0], apex.y + s * e1[1])
+    q2 = Pt(apex.x + s * e2[0], apex.y + s * e2[1])
+    if not (_on_run_extent(q1, ctx.run1, eps) and _on_run_extent(q2, ctx.run2, eps)):
+        ctx.warnings.append(ENTRY_WIDEN_HOST)
+        return None
+
+    # tangent points: c ± R·v̂, paired to each edge by lateral side of q
+    ux, uy = ctx.u_hat
+    v_hat = (-uy, ux)
+    def _t_for(q: Pt) -> Pt:
+        lat = (q.x - center.x) * v_hat[0] + (q.y - center.y) * v_hat[1]
+        sgn = 1.0 if lat >= 0.0 else -1.0
+        return Pt(center.x + r * sgn * v_hat[0], center.y + r * sgn * v_hat[1])
+
+    t1, t2 = _t_for(q1), _t_for(q2)
+    db_id = ctx.db_id or f"db-{ctx.edge1_eid}+{ctx.edge2_eid}"
+    throat = (
+        Seg(eid=f"throat-pending-{db_id}-1", a=q1, b=t1),
+        Seg(eid=f"throat-pending-{db_id}-2", a=q2, b=t2),
+    )
+    overlap = _throat_overlap_reason(throat, ctx.primitives, ctx.dogbones, eps)
+    if overlap is not None:
+        return Refusal(overlap)
+
+    ctx.widen = True
+    ctx.q1, ctx.q2 = q1, q2
+    ctx.t1, ctx.t2 = t1, t2
+    ctx.throat_pending = throat
+    ctx.warnings.append(ENTRY_WIDENED)
+    return None
+
+
 def _truth_table(ctx: _Ctx) -> Refusal | None:
     """Stage 2: protected set + SPEC §11.5 deletion truth table (rows ->
     deletions/flags/trims/warnings + the flagged set). None = proceed."""
@@ -602,6 +799,9 @@ def _truth_table(ctx: _Ctx) -> Refusal | None:
     protected.update(ctx.fold_eids)
     for db in ctx.dogbones:
         protected.add(db.arc.eid)
+        if db.throat is not None:
+            for th in db.throat:
+                protected.add(th.eid)
         for db_edge in (db.edge1_eid, db.edge2_eid):
             protected.add(db_edge)
             rr = resolve_edge(ctx.primitives, db_edge, ctx.eps_coincide)
@@ -652,29 +852,59 @@ def _truth_table(ctx: _Ctx) -> Refusal | None:
                 f"PROTECTED_ARC: placed arc {db.arc.eid} crosses the dogbone circle"
             )
 
+    widen = ctx.widen
+    u_hat = ctx.u_hat
+    q_depth = ctx.q_depth
+
+    def _pt_in_relief(p: Pt) -> bool:
+        if widen:
+            return go.in_capsule(
+                p, ctx.apex, ctx.center, ctx.r, u_hat, q_depth, ctx.eps_coincide
+            )
+        return go.in_disk(p, ctx.center, ctx.r, ctx.eps_coincide)
+
+    def _seg_crosses_relief(a: Pt, b: Pt) -> bool:
+        if widen:
+            return go.seg_hits_capsule_interior(
+                a, b, ctx.apex, ctx.center, ctx.r, u_hat, q_depth, ctx.eps_coincide
+            )
+        return go.seg_min_center_dist(a, b, ctx.center) < ctx.r - ctx.eps_coincide
+
     for e in ctx.primitives:
-        if (
-            isinstance(e, PassThrough)
-            or e.eid in protected
-            or _entity_window_dist(e, ctx.apex) > window
-        ):
+        if isinstance(e, PassThrough) or e.eid in protected:
+            continue
+        # ISSUE-026 / ADR-002 amend: CIRCLE flag uses relief intersection, not
+        # the 4× window. Window remains the prefilter for every other type.
+        if not isinstance(e, Circ) and _entity_window_dist(e, ctx.apex) > window:
             continue
         if isinstance(e, Seg):
-            a_in = go.in_disk(e.a, ctx.center, ctx.r, ctx.eps_coincide)
-            b_in = go.in_disk(e.b, ctx.center, ctx.r, ctx.eps_coincide)
+            a_in = _pt_in_relief(e.a)
+            b_in = _pt_in_relief(e.b)
             # ADR-030: a line longer than DELETE_MAX_MM with only one end in
-            # the circle is trimmed to the circle. Both ends inside, or a
+            # the relief is trimmed to the boundary. Both ends inside, or a
             # line at or under the cap, is still deleted whole.
             if a_in or b_in:
                 if (a_in and b_in) or go.dist(e.a, e.b) <= DELETE_MAX_MM:
                     deletions.append(e.eid)
                 else:
-                    trimmed = _trim_long_line(
-                        e, ctx.center, ctx.r, ctx.eps_coincide
-                    )
+                    if widen and ctx.throat_pending is not None:
+                        trimmed = _trim_long_line_capsule(
+                            e,
+                            ctx.apex,
+                            ctx.center,
+                            ctx.r,
+                            u_hat,
+                            q_depth,
+                            ctx.throat_pending,
+                            ctx.eps_coincide,
+                        )
+                    else:
+                        trimmed = _trim_long_line(
+                            e, ctx.center, ctx.r, ctx.eps_coincide
+                        )
                     if trimmed is not None:
                         trims.append(trimmed)
-            elif go.seg_min_center_dist(e.a, e.b, ctx.center) < ctx.r - ctx.eps_coincide:
+            elif _seg_crosses_relief(e.a, e.b):
                 decision, _invalid = _validated(e.eid, _OPTS_DELETE_KEEP)
                 flags.append(Flag(e.eid, "CHORD_CROSSER", _OPTS_DELETE_KEEP, decision))
                 flagged.add(e.eid)
@@ -684,9 +914,7 @@ def _truth_table(ctx: _Ctx) -> Refusal | None:
                     _kept_crosser(e.eid)
         elif isinstance(e, Arc):
             p0, p1 = go.arc_endpoints(e)
-            if go.in_disk(p0, ctx.center, ctx.r, ctx.eps_coincide) or go.in_disk(
-                p1, ctx.center, ctx.r, ctx.eps_coincide
-            ):
+            if _pt_in_relief(p0) or _pt_in_relief(p1):
                 decision, invalid = _validated(e.eid, _OPTS_DELETE_KEEP)
                 flags.append(Flag(e.eid, "ARC_ENDPOINT_IN", _OPTS_DELETE_KEEP, decision))
                 flagged.add(e.eid)
@@ -715,20 +943,38 @@ def _truth_table(ctx: _Ctx) -> Refusal | None:
                     if t is not None:
                         trims.append(t)
         elif isinstance(e, Circ):
+            # ISSUE-026: flag only when the hole overlaps the removed region
+            # beyond tangency (classic disk / widened capsule). Reason string
+            # CIRCLE_IN_WINDOW kept for sticky eid / tour compatibility.
+            if widen:
+                hits = go.circle_hits_capsule(
+                    e.center,
+                    e.r,
+                    ctx.apex,
+                    ctx.center,
+                    ctx.r,
+                    u_hat,
+                    q_depth,
+                    ctx.eps_coincide,
+                )
+            else:
+                hits = go.disks_overlap_beyond_tangency(
+                    e.center, e.r, ctx.center, ctx.r, ctx.eps_coincide
+                )
+            if not hits:
+                continue
             decision, _invalid = _validated(e.eid, _OPTS_DELETE_KEEP)
             flags.append(Flag(e.eid, "CIRCLE_IN_WINDOW", _OPTS_DELETE_KEEP, decision))
             flagged.add(e.eid)
             if decision == "delete":
                 deletions.append(e.eid)
-            elif (
-                decision == "keep"
-                and go.dist(ctx.center, e.center) < ctx.r + e.r - ctx.eps_coincide
-            ):
+            elif decision == "keep":
+                # Same predicate as flag raise → keep always warns.
                 warnings.append(
                     f"KEPT_INTERSECTS: kept CIRCLE {e.eid} intersects the dogbone circle"
                 )
         elif isinstance(e, PointEnt):
-            if go.in_disk(e.p, ctx.center, ctx.r, ctx.eps_coincide):
+            if _pt_in_relief(e.p):
                 deletions.append(e.eid)
         elif isinstance(e, TextEnt):
             decision, _invalid = _validated(e.eid, _OPTS_DELETE_KEEP)
@@ -745,9 +991,10 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
     # -- edge rebuild (ADR-003 ops; §11.4 uniqueness post-condition) --
     rebuilt: list[Rebuild] = []
     removed_portions: list[tuple[Pt, Pt]] = []
-    for label, run, seed in (
-        (ctx.edge1_eid, ctx.run1, ctx.seed1),
-        (ctx.edge2_eid, ctx.run2, ctx.seed2),
+    qs = (ctx.q1, ctx.q2) if ctx.widen else (None, None)
+    for label, run, seed, q in (
+        (ctx.edge1_eid, ctx.run1, ctx.seed1, qs[0]),
+        (ctx.edge2_eid, ctx.run2, ctx.seed2, qs[1]),
     ):
         rb = _rebuild_edge(
             label, run, seed, ctx.primitives, ctx.apex, ctx.center, ctx.r,
@@ -755,6 +1002,9 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
         )
         if isinstance(rb, Refusal):
             return _refused(rb.reason)
+        if q is not None:
+            # ADR-032: classic rebuild picks the moving endpoint; retarget to q
+            rb = Rebuild(eid=rb.eid, old=rb.old, new=q)
         rebuilt.append(rb)
         removed_portions.append((rb.old, rb.new))
 
@@ -765,29 +1015,65 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
         {t.eid for t in ctx.trims},
     )
 
-    # -- relief arc (endpoints == rebuilt endpoints; apex strictly mid-arc) --
-    p1, p2 = rebuilt[0].new, rebuilt[1].new  # rebuild order == (edge1, edge2)
-    a1 = go.pt_angle_deg(ctx.center, p1)
-    a2 = go.pt_angle_deg(ctx.center, p2)
-    aa = go.pt_angle_deg(ctx.center, ctx.apex)
-    if go.span_contains(a2, a1, aa, 1e-9):
-        start_deg, end_deg = a2, a1
-    elif go.span_contains(a1, a2, aa, 1e-9):
-        start_deg, end_deg = a1, a2
+    db_id = ctx.db_id or f"db-{ctx.edge1_eid}+{ctx.edge2_eid}"
+    throat: tuple[Seg, Seg] | None = None
+
+    if ctx.widen:
+        assert ctx.t1 is not None and ctx.t2 is not None
+        assert ctx.throat_pending is not None
+        # Corner-undercut semicircle: 180° through the apex (same side as
+        # classic clearance). Throat walls open on the air/mouth side at q
+        # so the bit can enter. Choosing the opposite (air-far) semicircle
+        # yields a reverse dogbone bump into the notch — rejected in
+        # 2026-10-27 GUI feedback; session log notes the brief's
+        # "away from apex" wording was wrong for the contour arc.
+        a1 = go.pt_angle_deg(ctx.center, ctx.t1)
+        a2 = go.pt_angle_deg(ctx.center, ctx.t2)
+        aa = go.pt_angle_deg(ctx.center, ctx.apex)
+        if go.span_contains(a1, a2, aa, 1e-9):
+            start_deg, end_deg = a1, a2
+        elif go.span_contains(a2, a1, aa, 1e-9):
+            start_deg, end_deg = a2, a1
+        else:
+            return _refused(
+                "TANGENT: undercut semicircle degenerate (entry-widen construction)"
+            )
+        span = go.span_len(start_deg, end_deg)
+        if abs(span - 180.0) > 1e-3:
+            raise ValueError(
+                f"widened arc span identity violated: {span:.9f} vs 180"
+            )
+        # invariants: |t1−t2| = 2R; walls // û; apex mid-arc
+        if abs(go.dist(ctx.t1, ctx.t2) - 2.0 * ctx.r) > 1e-6:
+            raise ValueError("widened tangent diameter identity violated")
+        if not go.span_contains(start_deg, end_deg, aa, 1e-6):
+            raise ValueError("widened undercut arc must contain apex")
+        throat = ctx.throat_pending
     else:
-        return _refused("TANGENT: apex not interior to the relief arc (degenerate construction)")
-    for bound in (start_deg, end_deg):
-        if abs(((aa - bound + 180.0) % 360.0) - 180.0) <= 1e-9:
+        # -- classic relief arc (endpoints == rebuilt; apex strictly mid-arc) --
+        p1, p2 = rebuilt[0].new, rebuilt[1].new  # rebuild order == (edge1, edge2)
+        a1 = go.pt_angle_deg(ctx.center, p1)
+        a2 = go.pt_angle_deg(ctx.center, p2)
+        aa = go.pt_angle_deg(ctx.center, ctx.apex)
+        if go.span_contains(a2, a1, aa, 1e-9):
+            start_deg, end_deg = a2, a1
+        elif go.span_contains(a1, a2, aa, 1e-9):
+            start_deg, end_deg = a1, a2
+        else:
             return _refused(
                 "TANGENT: apex not interior to the relief arc (degenerate construction)"
             )
-    span = go.span_len(start_deg, end_deg)
-    if abs(span - (360.0 - 4.0 * ctx.half_side)) > 1e-6:
-        raise ValueError(
-            f"arc span identity violated: {span:.9f} vs {360.0 - 4.0 * ctx.half_side:.9f}"
-        )
+        for bound in (start_deg, end_deg):
+            if abs(((aa - bound + 180.0) % 360.0) - 180.0) <= 1e-9:
+                return _refused(
+                    "TANGENT: apex not interior to the relief arc (degenerate construction)"
+                )
+        span = go.span_len(start_deg, end_deg)
+        if abs(span - (360.0 - 4.0 * ctx.half_side)) > 1e-6:
+            raise ValueError(
+                f"arc span identity violated: {span:.9f} vs {360.0 - 4.0 * ctx.half_side:.9f}"
+            )
 
-    db_id = ctx.db_id or f"db-{ctx.edge1_eid}+{ctx.edge2_eid}"
     arc = Arc(
         eid=f"arc-pending-{db_id}",
         center=ctx.center,
@@ -804,10 +1090,10 @@ def _rebuild_and_arc(ctx: _Ctx) -> CornerResult:
         edge1_eid=ctx.edge1_eid,
         edge2_eid=ctx.edge2_eid,
         arc=arc,
+        throat=throat,
     )
-    # ADR-031: designated folds are still never deleted. Trim them to this
-    # relief now, with the same rule export uses, so the working model shows
-    # the cut. A later export finds the ends already on the arc.
+    # ADR-031/032: designated folds are still never deleted. Trim them to the
+    # final contour (arc and/or throat), same rule export uses.
     if ctx.fold_eids:
         from rules.folds import out_of_reach_warnings, resolve_folds
 
@@ -849,9 +1135,9 @@ def place_corner(
     db_id: str | None = None,
     side_flip: int = +1,
 ) -> CornerResult:
-    """Full rule pipeline (CONTRACTS §2 order). M2.2 item 5: decomposed
-    into _validate_inputs -> _truth_table -> _rebuild_and_arc over an
-    internal _Ctx — public behavior and every refusal/warning string
+    """Full rule pipeline (CONTRACTS §2 order). M2.2 / ADR-032: decomposed
+    into _validate_inputs -> _plan_relief -> _truth_table -> _rebuild_and_arc
+    over an internal _Ctx — classic-path refusal/warning strings
     byte-identical; signature unchanged."""
     ctx = _Ctx(
         primitives=primitives,
@@ -868,6 +1154,9 @@ def place_corner(
         side_flip=side_flip,
     )
     ref = _validate_inputs(ctx)
+    if ref is not None:
+        return _refused(ref.reason)
+    ref = _plan_relief(ctx)
     if ref is not None:
         return _refused(ref.reason)
     ref = _truth_table(ctx)

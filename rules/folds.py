@@ -6,14 +6,15 @@ nearest valid candidate to itself, so a second resolve produces no Trim.
 
 Trim semantics per ADR-024(c) / CONTRACTS §1: ``Trim.old`` / ``Trim.new``
 = ``(Pt, Pt)`` endpoint pairs (Seg per ADR-015(d)). ONE Trim per fold eid
-whose supporting line crosses any dogbone relief arc; BOTH endpoints
+whose supporting line crosses any dogbone relief contour; BOTH endpoints
 resolve independently.
 
 Per-endpoint resolution (§11.6 "trim at first circle entry from the KEPT
 side"; the kept side = the side of the endpoint being resolved):
   - candidates = line-circle intersections across all dogbones, restricted
     to points ON the dogbone's relief ARC span (the fold meets the relief
-    arc, not the far side of the circle).
+    arc, not the far side of the circle), PLUS (ADR-032) intersections with
+    throat wall segments when present — first hit wins.
   - the KEPT portion for endpoint p is the portion on p's side of the cut
     = ``p -> cand`` (NOT ``cand -> other`` — that's the discarded side for
     a both-sides crossing). Reject candidates whose kept portion's OPEN
@@ -23,7 +24,7 @@ side"; the kept side = the side of the endpoint being resolved):
     if the nearest candidate is beyond ``FOLD_REACH_FACTOR * WINDOW_FACTOR
     * 2 * r`` of the endpoint, leave unchanged (out-of-reach warning
     surfaced via ``out_of_reach_warnings``). TRIM (endpoint inside) has no
-    reach cap.
+    reach cap. Throat-wall hits use the same reach cap vs ``db.r``.
 """
 from __future__ import annotations
 
@@ -107,44 +108,62 @@ def _resolve_endpoint(
     proj_p = _proj(p, fold_a, fold_dir)
     proj_q = _proj(q, fold_a, fold_dir)
     best: tuple[float, Dogbone, Pt] | None = None
+    fold_b = Pt(fold_a.x + fold_dir[0], fold_a.y + fold_dir[1])
+
+    def _consider(db: Dogbone, cand: Pt, p_in: bool) -> None:
+        nonlocal best
+        proj_cand = _proj(cand, fold_a, fold_dir)
+        # No-flip guard: reject candidates on the FAR side of q (the other
+        # endpoint). A fold entirely on one side of the circle must not
+        # extend the FAR endpoint through the near endpoint to reach the
+        # circle — that would reverse the fold's extent. Only the NEAR
+        # endpoint (the one closer to the circle) may extend/trim.
+        if proj_p <= proj_q and proj_cand > proj_q + eps:
+            return
+        if proj_p >= proj_q and proj_cand < proj_q - eps:
+            return
+        # KEPT portion: for an OUTSIDE endpoint, the kept side is p's side
+        # of the cut = p -> cand. For an INSIDE endpoint, the kept side is
+        # towards the other (outside) endpoint = cand -> q. The §11.4 post-
+        # condition applies to the kept portion either way.
+        if p_in:
+            if go.seg_interior_hits_disk(cand, q, db.center, db.r, eps):
+                return
+        else:
+            if go.seg_interior_hits_disk(p, cand, db.center, db.r, eps):
+                return
+        d = go.dist(p, cand)
+        if best is None or d < best[0]:
+            best = (d, db, cand)
+
     for db in dogbones:
-        xs = go.line_circle_intersections(fold_a, Pt(fold_a.x + fold_dir[0], fold_a.y + fold_dir[1]), db.center, db.r)
-        if len(xs) < 2:
-            continue
+        xs = go.line_circle_intersections(fold_a, fold_b, db.center, db.r)
         p_in = go.dist(p, db.center) < db.r - eps  # strictly inside (not on-arc)
         for cand in xs:
             ang = go.pt_angle_deg(db.center, cand)
             if not go.span_contains(db.arc.start_deg, db.arc.end_deg, ang, eps):
                 continue
-            proj_cand = _proj(cand, fold_a, fold_dir)
-            # No-flip guard: reject candidates on the FAR side of q (the other
-            # endpoint). A fold entirely on one side of the circle must not
-            # extend the FAR endpoint through the near endpoint to reach the
-            # circle — that would reverse the fold's extent. Only the NEAR
-            # endpoint (the one closer to the circle) may extend/trim.
-            if proj_p <= proj_q and proj_cand > proj_q + eps:
-                continue
-            if proj_p >= proj_q and proj_cand < proj_q - eps:
-                continue
-            # KEPT portion: for an OUTSIDE endpoint, the kept side is p's side
-            # of the cut = p -> cand. For an INSIDE endpoint, the kept side is
-            # towards the other (outside) endpoint = cand -> q. The §11.4 post-
-            # condition applies to the kept portion either way.
-            if p_in:
-                if go.seg_interior_hits_disk(cand, q, db.center, db.r, eps):
+            _consider(db, cand, p_in)
+        # ADR-032: throat walls are part of the final contour — first hit wins
+        if db.throat is not None:
+            for th in db.throat:
+                ip = go.line_intersection(fold_a, fold_b, th.a, th.b, eps)
+                if ip is None:
                     continue
-            else:
-                if go.seg_interior_hits_disk(p, cand, db.center, db.r, eps):
+                if go.point_seg_dist(ip, th.a, th.b) > eps:
                     continue
-            d = go.dist(p, cand)
-            if best is None or d < best[0]:
-                best = (d, db, cand)
+                _consider(db, ip, p_in)
     if best is None:
         return None, None, None
     d, db, cand = best
     if d <= eps:
         return None, None, None
     reach = FOLD_REACH_FACTOR * WINDOW_FACTOR * 2.0 * db.r
+    # Idempotent on throat too: already on a throat wall counts as on-contour
+    if db.throat is not None:
+        for th in db.throat:
+            if go.point_seg_dist(p, th.a, th.b) <= eps:
+                return None, None, None
     if go.dist(p, db.center) > db.r + eps and d > reach + eps:
         return (
             None,

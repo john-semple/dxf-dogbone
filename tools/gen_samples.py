@@ -573,7 +573,7 @@ def main():
             lines.append("|---|---|---|---|")
             exp_out = {
                 "syn-shallow-refuse.dxf": "refused (shallow-angle)",
-                "syn-near-hole.dxf": "placeable; CIRCLE+MTEXT flagged",
+                "syn-near-hole.dxf": "placeable; MTEXT flagged (CIRCLE in-window but clear of relief — ISSUE-026)",
                 "syn-arc-tears.dxf": "placeable; A1 DELETE+FLAG, A2 FLAG(trim), L1 FLAG, L2 DELETE",
             }.get(name, "placeable")
             for (v, adeg, c) in recs:

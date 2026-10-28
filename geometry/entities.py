@@ -100,14 +100,17 @@ class Dogbone:
     side: Side
     edge1_eid: str
     edge2_eid: str
-    arc: Arc  # replacement arc; endpoints == rebuilt edge endpoints
+    arc: Arc  # classic: endpoints == rebuilt; widened: far semicircle (t1/t2)
+    # ADR-032: None = classic dogbone; both throat LINEs when entry-widened
+    # (q_i → t_i). Pending eids throat-pending-<db_id>-{1,2}; mint at apply.
+    throat: tuple[Seg, Seg] | None = None
 
 
 @dataclass(frozen=True)
 class Rebuild:  # one edge endpoint moved by a placement (ADR-003; member eids per ADR-012)
     eid: str  # member (or composite) eid whose endpoint moved
     old: Pt
-    new: Pt  # == arc endpoint after rebuild
+    new: Pt  # classic: == arc endpoint; widened (ADR-032): == throat junction q_i
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,7 @@ class Trim:  # endpoint repositioned without deletion (strays, folds, flag-trim)
 @dataclass(frozen=True)
 class Flag:  # ADR-009/013: explicit-user-decision entity
     eid: str
-    reason: str  # "CIRCLE_IN_WINDOW" | "MTEXT_IN_WINDOW" | "ARC_ENDPOINT_IN" | "CHORD_CROSSER" | "CASCADE_DANGLING"
+    reason: str  # "CIRCLE_IN_WINDOW" (legacy: CIRCLE intersects relief, ISSUE-026) | "MTEXT_IN_WINDOW" | "ARC_ENDPOINT_IN" | "CHORD_CROSSER" | "CASCADE_DANGLING"
     options: frozenset  # subset of {"delete","keep","trim"}
     decision: str | None  # None while pending; else "delete"|"keep"|"trim"
 

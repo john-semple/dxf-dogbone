@@ -163,7 +163,7 @@ Every primitive carries an immutable string ID (`eid`: DXF handle at load, minte
 
 ### 11.5 Stray / deletion truth table (hardened §4.3)
 
-For each entity in the 4×-diameter window (window is a **prefilter only** — the circle test is the rule):
+For LINE/ARC/POINT/MTEXT: consider each entity in the 4×-diameter window (window is a **prefilter only** — the geometric circle/capsule test is the rule). **CIRCLE is not window-prefiltered** (ISSUE-026 / ADR-002): evaluate every CIRCLE against the removed-region intersection rule below.
 
 | Case | Action |
 |---|---|
@@ -174,8 +174,8 @@ For each entity in the 4×-diameter window (window is a **prefilter only** — t
 | ARC, ≥1 endpoint inside circle (v3) | delete, **flagged** |
 | ARC chord-crosser (v3) | **flagged**: delete or trim to the kept-side sub-arc (single piece, no two-piece splitting) |
 | ARC crossing circle where arc is protected | refuse this corner with highlighted warning |
-| CIRCLE (arc hole) | **flagged**, never auto-deleted/trimmed |
-| MTEXT | **flagged**, never auto-deleted/trimmed |
+| CIRCLE (arc hole) | **flagged** only when it intersects the relief beyond tangency (classic disk / widened capsule; ISSUE-026 / ADR-002), never auto-deleted/trimmed. Reason string remains `CIRCLE_IN_WINDOW` (legacy name). |
+| MTEXT | **flagged** when in the 4× window, never auto-deleted/trimmed |
 | POINT inside circle | delete |
 | Protected entities (main edges, folds, placed arcs) | exempt |
 

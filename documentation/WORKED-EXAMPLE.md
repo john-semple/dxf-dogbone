@@ -64,7 +64,7 @@ Tear fragments in-window (circle test, endpoint-in-circle per table):
 | (44.2484, 51.5118) â†’ (45.0, 51.5118) | (45.0,51.5118): 1.58397 < R (in); (44.2484,51.5118): 2.18203 (out) | DELETE |
 | (44.2484, 51.5118) â†’ (44.2484, 51.5168) | 2.18203, 2.18460 (both out) | survives the circle test â€” **attachment cascade** (below) deletes it |
 | (44.2484, 51.5168) â†’ (âˆ’44.2484, 51.5168) tab-top run | 2.18460, â‰«R | survives (east endpoint is attachment-in-removed-portion but HAS a remaining attached neighbor west â€” cascade criterion not met; rebuilt by the LEFT junction's dogbone later) |
-| CIRCLE/MTEXT | â€” | none inside window â†’ no flags for this corner |
+| CIRCLE/MTEXT | â€” | no CIRCLE intersects the relief; no MTEXT in window â†’ no flags for this corner (ISSUE-026: CIRCLE is intersection-gated, not window-gated) |
 
 **Attachment cascade (ADR-012 loop-2/3 amendment, both criteria):** the vertical stub's top endpoint (44.2484, 51.5168) lies in edge-2's removed portion AND â€” evaluated transitively, with removed-portion-vertex contacts not counting â€” the stub retains no remaining attached neighbor (its run contact sits at a removed-portion vertex; the horizontal tear stub was already truth-table-deleted) â†’ cascade delete, **flagged with scripted decision "delete"** in fixtures. The tab-top run survives because its remaining contacts live at non-removed vertices to the west (adjacency criterion discriminates stub vs run). This matches the user's hand-cleaned after-file (stub absent there).
 
